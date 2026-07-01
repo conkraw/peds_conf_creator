@@ -11,6 +11,8 @@ from io import BytesIO
 from typing import Any, Dict, List
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from PIL import Image
+
 from docx import Document
 from docx.enum.section import WD_ORIENT
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
@@ -288,9 +290,30 @@ def _add_field_row(table, label: str, value: str, label_fill: str = HEADER_GRAY)
     _write_cell_text(value_cell, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_MUTED if not value else TEXT_DARK)
 
 
+def _fit_image_dimensions(image_bytes: bytes, max_width: float = 4.85, max_height: float = 2.15) -> tuple[float, float]:
+    """Return image dimensions in inches that fit within the mentor review cell."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            px_w, px_h = img.size
+    except Exception:
+        return max_width, max_height
+
+    if not px_w or not px_h:
+        return max_width, max_height
+
+    image_ratio = px_w / px_h
+    box_ratio = max_width / max_height
+    if image_ratio >= box_ratio:
+        width = max_width
+        height = max_width / image_ratio
+    else:
+        height = max_height
+        width = max_height * image_ratio
+    return max(0.1, width), max(0.1, height)
+
+
 def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) -> None:
     image_bytes = _visual_image_bytes(slide)
-    filename = _visual_image_filename(slide)
     if not image_bytes:
         _add_field_row(table, "Uploaded visual", "[none]", label_fill)
         return
@@ -306,20 +329,19 @@ def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) 
     _write_cell_text(label_cell, "Uploaded visual", font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
 
     _clear_cell(value_cell)
-    p = value_cell.paragraphs[0]
-    p.paragraph_format.space_after = Pt(4)
-    run = p.add_run(filename or "Uploaded visual")
-    run.font.name = DOC_FONT
-    run.font.size = Pt(8.5)
-    run.font.bold = True
-    run.font.color.rgb = TEXT_MUTED
     try:
-        image_p = value_cell.add_paragraph()
+        image_width, image_height = _fit_image_dimensions(image_bytes)
+        image_p = value_cell.paragraphs[0]
         image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        image_p.paragraph_format.space_after = Pt(0)
         image_run = image_p.add_run()
-        image_run.add_picture(BytesIO(image_bytes), width=Inches(4.7))
+        image_run.add_picture(
+            BytesIO(image_bytes),
+            width=Inches(image_width),
+            height=Inches(image_height),
+        )
     except Exception:
-        value_cell.add_paragraph("[Uploaded visual could not be rendered in Word preview]")
+        value_cell.paragraphs[0].add_run("[Uploaded visual could not be rendered in Word preview]")
 
 
 def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> None:

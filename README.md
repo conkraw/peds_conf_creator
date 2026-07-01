@@ -60,3 +60,6 @@ PowerPoint should only be used for minor spacing/layout tweaks after export. Maj
 
 
 Update v3.3: removed the Visual / evidence plan editor box; uploaded slide visuals now occupy about half of the exported PowerPoint slide.
+
+
+Update v3.4: mentor review uploaded visuals are centered, constrained to fit within the table cell, and no longer display the uploaded file name.
