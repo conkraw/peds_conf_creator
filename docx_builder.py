@@ -1,36 +1,54 @@
-"""
-Word planning-form builder for the Presentation Builder app.
+"""Word export logic for the Presentation PowerPoint Builder.
 
-This creates a DOCX companion document that behaves like the printable planning
-forms in the journal-club/case-conference apps: title block, objectives,
-slide-by-slide storyboard, speaker-note prompts, mentor review, and final archive
-checklist.
+The mentor review document is the review workspace. The app does not store mentor
+critiques; mentors can use Word comments or Track Changes in the generated DOCX.
 """
 
 from __future__ import annotations
 
-import io
-from typing import Any, Dict, Iterable, List
+from io import BytesIO
+from typing import Any, Dict, List
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from deck_model import CHECKLIST_LABELS, split_nonempty_lines, slide_output_title
+from deck_model import BLOOM_HELPER, identity_subtitle, identity_title, slide_output_title, split_nonempty_lines
 
-BLUE = "D9EAF7"
-GREEN = "BFEDD2"
-RED = "F4CCCC"
-GRAY = "E7E6E6"
-PALE_BLUE = "F7FBFF"
-DARK_BLUE = RGBColor(31, 78, 121)
+BLUE = "1F4E79"
+LIGHT_BLUE = "D9EAF7"
+HEADER_GRAY = "D9D9D9"
+PALE_GRAY = "F7F7F7"
+PINK = "F4CCCC"
+WHITE = "FFFFFF"
+BORDER = "000000"
+DOC_FONT = "Calibri"
+TEXT_DARK = RGBColor(25, 25, 25)
+TEXT_MUTED = RGBColor(95, 95, 95)
+EMU_PER_INCH = 914400
+TWIPS_PER_INCH = 1440
 
 
-def set_cell_shading(cell, fill: str) -> None:
+# -----------------------------------------------------------------------------
+# Low-level table formatting helpers
+# -----------------------------------------------------------------------------
+
+
+def _safe_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _body_width_inches(doc: Document) -> float:
+    section = doc.sections[-1]
+    return float(section.page_width - section.left_margin - section.right_margin) / EMU_PER_INCH
+
+
+def _shade_cell(cell, fill: str) -> None:
     tc_pr = cell._tc.get_or_add_tcPr()
     shd = tc_pr.find(qn("w:shd"))
     if shd is None:
@@ -39,226 +57,297 @@ def set_cell_shading(cell, fill: str) -> None:
     shd.set(qn("w:fill"), fill)
 
 
-def set_cell_text(cell, text: str, bold: bool = False, font_size: int = 9) -> None:
-    cell.text = ""
-    p = cell.paragraphs[0]
-    run = p.add_run(text or "")
-    run.font.name = "Aptos"
-    run.font.size = Pt(font_size)
-    run.font.bold = bold
-    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-
-
-def set_table_borders(table) -> None:
-    tbl = table._tbl
-    tbl_pr = tbl.tblPr
-    borders = tbl_pr.first_child_found_in("w:tblBorders")
+def _set_cell_borders(cell, color: str = BORDER, size: str = "6") -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.find(qn("w:tcBorders"))
     if borders is None:
-        borders = OxmlElement("w:tblBorders")
-        tbl_pr.append(borders)
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
     for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        tag = f"w:{edge}"
-        element = borders.find(qn(tag))
+        element = borders.find(qn(f"w:{edge}"))
         if element is None:
-            element = OxmlElement(tag)
+            element = OxmlElement(f"w:{edge}")
             borders.append(element)
         element.set(qn("w:val"), "single")
-        element.set(qn("w:sz"), "4")
+        element.set(qn("w:sz"), size)
         element.set(qn("w:space"), "0")
-        element.set(qn("w:color"), "B7C9D8")
+        element.set(qn("w:color"), color)
 
 
-def add_heading(doc: Document, text: str, color: RGBColor = DARK_BLUE) -> None:
-    p = doc.add_paragraph()
-    p.style = doc.styles["Heading 2"]
-    run = p.add_run(text)
-    run.font.name = "Aptos Display"
-    run.font.bold = True
-    run.font.color.rgb = color
-    run.font.size = Pt(13)
+def _set_cell_margins(cell, top: int = 70, start: int = 90, bottom: int = 70, end: int = 90) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_mar = tc_pr.first_child_found_in("w:tcMar")
+    if tc_mar is None:
+        tc_mar = OxmlElement("w:tcMar")
+        tc_pr.append(tc_mar)
+    for name, value in {"top": top, "start": start, "bottom": bottom, "end": end}.items():
+        node = tc_mar.find(qn(f"w:{name}"))
+        if node is None:
+            node = OxmlElement(f"w:{name}")
+            tc_mar.append(node)
+        node.set(qn("w:w"), str(value))
+        node.set(qn("w:type"), "dxa")
 
 
-def add_small_note(doc: Document, text: str) -> None:
-    p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(4)
-    run = p.add_run(text)
-    run.font.name = "Aptos"
-    run.font.size = Pt(8.5)
-    run.font.italic = True
-    run.font.color.rgb = RGBColor(90, 90, 90)
+def _set_cell_width(cell, width_inches: float) -> None:
+    cell.width = Inches(width_inches)
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_w = tc_pr.find(qn("w:tcW"))
+    if tc_w is None:
+        tc_w = OxmlElement("w:tcW")
+        tc_pr.append(tc_w)
+    tc_w.set(qn("w:w"), str(int(width_inches * TWIPS_PER_INCH)))
+    tc_w.set(qn("w:type"), "dxa")
 
 
-def configure_document(doc: Document) -> None:
+def _lock_table_widths(table, widths: List[float]) -> None:
+    table.autofit = False
+    table.allow_autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    tbl_pr = table._tbl.tblPr
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), str(int(sum(widths) * TWIPS_PER_INCH)))
+    tbl_w.set(qn("w:type"), "dxa")
+    tbl_layout = tbl_pr.find(qn("w:tblLayout"))
+    if tbl_layout is None:
+        tbl_layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(tbl_layout)
+    tbl_layout.set(qn("w:type"), "fixed")
+    for row in table.rows:
+        for idx, width in enumerate(widths):
+            if idx < len(row.cells):
+                _set_cell_width(row.cells[idx], width)
+
+
+def _set_row_height(row, height_pt: float, exact: bool = False) -> None:
+    row.height = Pt(height_pt)
+    row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY if exact else WD_ROW_HEIGHT_RULE.AT_LEAST
+    tr_pr = row._tr.get_or_add_trPr()
+    tr_height = tr_pr.find(qn("w:trHeight"))
+    if tr_height is None:
+        tr_height = OxmlElement("w:trHeight")
+        tr_pr.append(tr_height)
+    tr_height.set(qn("w:val"), str(int(height_pt * 20)))
+    tr_height.set(qn("w:hRule"), "exact" if exact else "atLeast")
+
+
+def _clear_cell(cell) -> None:
+    cell.text = ""
+    if not cell.paragraphs:
+        cell.add_paragraph()
+
+
+def _write_cell_text(
+    cell,
+    text: Any,
+    *,
+    font_size: float = 9.0,
+    bold: bool = False,
+    italic: bool = False,
+    color: RGBColor = TEXT_DARK,
+    align=WD_ALIGN_PARAGRAPH.LEFT,
+    line_spacing: float = 1.0,
+) -> None:
+    _clear_cell(cell)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    paragraphs = _safe_text(text).splitlines() or [""]
+    for idx, raw in enumerate(paragraphs):
+        p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
+        p.alignment = align
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.line_spacing = line_spacing
+        run = p.add_run(raw)
+        run.font.name = DOC_FONT
+        run.font.size = Pt(font_size)
+        run.font.bold = bold
+        run.font.italic = italic
+        run.font.color.rgb = color
+
+
+# -----------------------------------------------------------------------------
+# Document building blocks
+# -----------------------------------------------------------------------------
+
+
+def _add_title_block(doc: Document, deck: Dict[str, Any]) -> None:
+    width = _body_width_inches(doc)
+    table = doc.add_table(rows=2, cols=1)
+    table.style = "Table Grid"
+    _lock_table_widths(table, [width])
+
+    cell = table.cell(0, 0)
+    _shade_cell(cell, BLUE)
+    _set_cell_borders(cell)
+    _set_cell_margins(cell, 90, 120, 90, 120)
+    _write_cell_text(cell, "MENTOR POWERPOINT REVIEW DOCUMENT", font_size=14, bold=True, color=RGBColor(255, 255, 255), align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    cell = table.cell(1, 0)
+    _shade_cell(cell, LIGHT_BLUE)
+    _set_cell_borders(cell)
+    _set_cell_margins(cell, 90, 120, 90, 120)
+    _write_cell_text(cell, f"{identity_title(deck)}\n{identity_subtitle(deck)}", font_size=10.5, bold=False, color=TEXT_DARK, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+
+
+def _add_guidelines(doc: Document) -> None:
+    width = _body_width_inches(doc)
+    table = doc.add_table(rows=5, cols=1)
+    table.style = "Table Grid"
+    _lock_table_widths(table, [width])
+
+    rows = [
+        ("How to use this document", LIGHT_BLUE, True),
+        ("Use Word comments or Track Changes to critique slide wording, clarity, educational flow, accuracy, and speaker notes. Do not rewrite the presentation inside the app. The resident should return to the app and make final edits there.", WHITE, False),
+        ("Mentor focus", LIGHT_BLUE, True),
+        ("1. Does the title/objectives match the actual story?\n2. Do the slide titles tell a clear beginning-middle-end narrative?\n3. Is each slide readable and teachable?\n4. Are the speaker notes useful enough for rehearsal?\n5. Are results/data interpreted rather than dumped?", WHITE, False),
+        ("Track Changes is enabled in this document so edits are easier to review.", PALE_GRAY, False),
+    ]
+    for i, (text, fill, bold) in enumerate(rows):
+        cell = table.cell(i, 0)
+        _shade_cell(cell, fill)
+        _set_cell_borders(cell)
+        _set_cell_margins(cell)
+        _write_cell_text(cell, text, font_size=9.2 if not bold else 9.8, bold=bold, color=TEXT_DARK)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+
+
+def _add_bloom_reference(doc: Document) -> None:
+    width = _body_width_inches(doc)
+    table = doc.add_table(rows=1 + len(BLOOM_HELPER), cols=2)
+    table.style = "Table Grid"
+    _lock_table_widths(table, [1.35, width - 1.35])
+
+    h1, h2 = table.rows[0].cells
+    for cell, text in [(h1, "Bloom level"), (h2, "Useful verbs")]:
+        _shade_cell(cell, HEADER_GRAY)
+        _set_cell_borders(cell)
+        _set_cell_margins(cell)
+        _write_cell_text(cell, text, font_size=8.5, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    for row_idx, (level, verbs) in enumerate(BLOOM_HELPER.items(), start=1):
+        c1, c2 = table.rows[row_idx].cells
+        _shade_cell(c1, WHITE)
+        _shade_cell(c2, WHITE)
+        _set_cell_borders(c1)
+        _set_cell_borders(c2)
+        _set_cell_margins(c1)
+        _set_cell_margins(c2)
+        _write_cell_text(c1, level, font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
+        _write_cell_text(c2, verbs, font_size=8.5)
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+
+def _add_slide_banner(doc: Document, text: str) -> None:
+    width = _body_width_inches(doc)
+    table = doc.add_table(rows=1, cols=1)
+    table.style = "Table Grid"
+    _lock_table_widths(table, [width])
+    cell = table.cell(0, 0)
+    _shade_cell(cell, BLUE)
+    _set_cell_borders(cell)
+    _set_cell_margins(cell, 65, 90, 65, 90)
+    _write_cell_text(cell, text, font_size=10.5, bold=True, color=RGBColor(255, 255, 255))
+    _set_row_height(table.rows[0], 20, exact=False)
+
+
+def _add_field_row(table, label: str, value: str, label_fill: str = HEADER_GRAY) -> None:
+    row = table.add_row()
+    label_cell, value_cell = row.cells
+    _shade_cell(label_cell, label_fill)
+    _shade_cell(value_cell, WHITE)
+    _set_cell_borders(label_cell)
+    _set_cell_borders(value_cell)
+    _set_cell_margins(label_cell)
+    _set_cell_margins(value_cell)
+    _write_cell_text(label_cell, label, font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
+    _write_cell_text(value_cell, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_MUTED if not value else TEXT_DARK)
+
+
+def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> None:
+    title = slide_output_title(deck, slide, index)
+    role = slide.get("role") or "Slide"
+    _add_slide_banner(doc, f"Slide {index}: {title}")
+
+    width = _body_width_inches(doc)
+    table = doc.add_table(rows=0, cols=2)
+    table.style = "Table Grid"
+    _lock_table_widths(table, [1.65, width - 1.65])
+
+    _add_field_row(table, "Role", role)
+    _add_field_row(table, "Title", _safe_text(slide.get("title")))
+    _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
+    _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
+    _add_field_row(table, "Visual plan", _safe_text(slide.get("visual_plan")))
+    _add_field_row(table, "Discussion prompt", _safe_text(slide.get("discussion_prompt")))
+    _add_field_row(table, "Speaker notes", _safe_text(slide.get("speaker_notes")))
+    _add_field_row(table, "Mentor notes", "[Add comments here or use Word comments in the margin.]", PINK)
+
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+
+def _enable_track_changes(docx_stream: BytesIO) -> BytesIO:
+    """Open the generated mentor document with Track Changes enabled."""
+    try:
+        source = BytesIO(docx_stream.getvalue())
+        target = BytesIO()
+        with ZipFile(source, "r") as zin, ZipFile(target, "w", ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == "word/settings.xml":
+                    xml = data.decode("utf-8")
+                    if "w:trackRevisions" not in xml:
+                        xml = xml.replace("</w:settings>", "<w:trackRevisions/></w:settings>")
+                    data = xml.encode("utf-8")
+                zout.writestr(item, data)
+        target.seek(0)
+        return target
+    except Exception:
+        docx_stream.seek(0)
+        return docx_stream
+
+
+def build_mentor_review_docx(deck: Dict[str, Any]) -> bytes:
+    """Build an editable mentor review Word document."""
+    doc = Document()
     section = doc.sections[0]
-    section.orientation = WD_ORIENT.LANDSCAPE
-    section.page_width, section.page_height = section.page_height, section.page_width
-    section.top_margin = Inches(0.35)
-    section.bottom_margin = Inches(0.35)
-    section.left_margin = Inches(0.4)
-    section.right_margin = Inches(0.4)
+    section.orientation = WD_ORIENT.PORTRAIT
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
+    section.top_margin = Inches(0.52)
+    section.bottom_margin = Inches(0.52)
+    section.left_margin = Inches(0.55)
+    section.right_margin = Inches(0.55)
 
     styles = doc.styles
-    styles["Normal"].font.name = "Aptos"
-    styles["Normal"].font.size = Pt(9)
-    styles["Heading 1"].font.name = "Aptos Display"
-    styles["Heading 1"].font.size = Pt(16)
-    styles["Heading 1"].font.bold = True
-    styles["Heading 2"].font.name = "Aptos Display"
-    styles["Heading 2"].font.size = Pt(13)
-    styles["Heading 2"].font.bold = True
+    styles["Normal"].font.name = DOC_FONT
+    styles["Normal"].font.size = Pt(9.5)
+
+    _add_title_block(doc, deck)
+    _add_guidelines(doc)
+    _add_bloom_reference(doc)
+
+    for idx, slide in enumerate(deck.get("slides", []), start=1):
+        _add_slide_review_block(doc, deck, slide, idx)
+
+    output = BytesIO()
+    doc.save(output)
+    output.seek(0)
+    reviewed = _enable_track_changes(output)
+    return reviewed.getvalue()
 
 
-def add_title_block(doc: Document, deck: Dict[str, Any]) -> None:
-    meta = deck.get("metadata", {})
-    title = meta.get("presentation_title") or "Untitled Presentation"
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("PRESENTATION PLANNING FORM")
-    run.font.name = "Aptos Display"
-    run.font.bold = True
-    run.font.color.rgb = DARK_BLUE
-    run.font.size = Pt(15)
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(title)
-    run.font.name = "Aptos Display"
-    run.font.bold = True
-    run.font.size = Pt(13)
-
-    table = doc.add_table(rows=4, cols=4)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = True
-    set_table_borders(table)
-    rows = [
-        ("Presenter", meta.get("presenter", ""), "Date", meta.get("session_date", "")),
-        ("Audience", meta.get("audience", ""), "Type", meta.get("presentation_type", "")),
-        ("Core question", meta.get("core_question", ""), "Story arc", meta.get("story_arc", "")),
-        ("GitHub/archive notes", meta.get("github_notes", ""), "Version", deck.get("app_version", "")),
-    ]
-    for row, values in zip(table.rows, rows):
-        for i, value in enumerate(values):
-            set_cell_text(row.cells[i], value, bold=i in (0, 2), font_size=8.5)
-            if i in (0, 2):
-                set_cell_shading(row.cells[i], GRAY)
-            else:
-                set_cell_shading(row.cells[i], PALE_BLUE)
-
-
-def add_objectives(doc: Document, deck: Dict[str, Any]) -> None:
-    add_heading(doc, "Objectives")
-    add_small_note(doc, "Use measurable Bloom-style verbs such as describe, differentiate, apply, analyze, appraise, or design.")
-    objectives_slide = next((slide for slide in deck.get("slides", []) if slide.get("role") == "Objectives"), None)
-    objectives = split_nonempty_lines(objectives_slide.get("body", "") if objectives_slide else "")
-    if not objectives:
-        objectives = ["Objective 1:", "Objective 2:", "Objective 3:"]
-    for objective in objectives:
-        p = doc.add_paragraph(style="List Bullet")
-        p.paragraph_format.space_after = Pt(2)
-        run = p.add_run(objective)
-        run.font.name = "Aptos"
-        run.font.size = Pt(9)
-
-
-def slide_summary(slide: Dict[str, Any]) -> str:
-    parts = []
-    body = slide.get("body", "").strip()
-    if body:
-        parts.append(body)
-    visual = slide.get("visual_plan", "").strip()
-    if visual:
-        parts.append(f"Visual/evidence: {visual}")
-    prompt = slide.get("discussion_prompt", "").strip()
-    if prompt:
-        parts.append(f"Audience prompt: {prompt}")
+def build_plain_text_summary(deck: Dict[str, Any]) -> str:
+    """Optional helper used by tests and future integrations."""
+    parts = [identity_title(deck), identity_subtitle(deck), ""]
+    for idx, slide in enumerate(deck.get("slides", []), start=1):
+        parts.append(f"Slide {idx}: {slide_output_title(deck, slide, idx)}")
+        for key in ["body", "visual_plan", "discussion_prompt", "speaker_notes"]:
+            value = _safe_text(slide.get(key))
+            if value:
+                parts.append(f"{key}: {value}")
+        parts.append("")
     return "\n".join(parts)
-
-
-def add_storyboard(doc: Document, deck: Dict[str, Any]) -> None:
-    add_heading(doc, "Slide storyboard")
-    add_small_note(doc, "Slide titles should create a narrative. Blank titles are allowed while drafting and will export as generic story-slide titles.")
-
-    included = [slide for slide in deck.get("slides", []) if slide.get("include", True)]
-    table = doc.add_table(rows=1, cols=5)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = True
-    set_table_borders(table)
-    headers = ["#", "Role", "Slide title", "Main message / visual plan", "Speaker notes"]
-    for i, header in enumerate(headers):
-        set_cell_text(table.rows[0].cells[i], header, bold=True, font_size=8.5)
-        set_cell_shading(table.rows[0].cells[i], BLUE)
-
-    for index, slide in enumerate(included, start=1):
-        row = table.add_row().cells
-        set_cell_text(row[0], str(index), font_size=8)
-        set_cell_text(row[1], slide.get("role", ""), font_size=8)
-        set_cell_text(row[2], slide_output_title(deck, slide, index), font_size=8)
-        set_cell_text(row[3], slide_summary(slide), font_size=8)
-        set_cell_text(row[4], slide.get("speaker_notes", ""), font_size=8)
-        for cell in row:
-            set_cell_shading(cell, "FFFFFF")
-
-
-def add_mentor_review(doc: Document, deck: Dict[str, Any]) -> None:
-    mr = deck.get("mentor_review", {})
-    add_heading(doc, "Mentor review")
-
-    table = doc.add_table(rows=4, cols=4)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    set_table_borders(table)
-    rows = [
-        ("Mentor", mr.get("mentor_name", ""), "Email", mr.get("mentor_email", "")),
-        ("Status", mr.get("review_status", ""), "Requested", mr.get("requested_review_date", "")),
-        ("Completed", mr.get("review_completed_date", ""), "Include slide", "Yes" if mr.get("include_mentor_review_slide") else "No"),
-        ("Approval statement", mr.get("mentor_approval_statement", ""), "Feedback", mr.get("mentor_feedback", "")),
-    ]
-    for row, values in zip(table.rows, rows):
-        for i, value in enumerate(values):
-            set_cell_text(row.cells[i], value, bold=i in (0, 2), font_size=8.2)
-            set_cell_shading(row.cells[i], GRAY if i in (0, 2) else "FFFFFF")
-
-    checklist = mr.get("checklist", {})
-    check_table = doc.add_table(rows=1, cols=2)
-    check_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    set_table_borders(check_table)
-    set_cell_text(check_table.rows[0].cells[0], "Mentor checklist item", bold=True, font_size=8.5)
-    set_cell_text(check_table.rows[0].cells[1], "Done", bold=True, font_size=8.5)
-    set_cell_shading(check_table.rows[0].cells[0], GREEN)
-    set_cell_shading(check_table.rows[0].cells[1], GREEN)
-    for key, label in CHECKLIST_LABELS.items():
-        cells = check_table.add_row().cells
-        set_cell_text(cells[0], label, font_size=8.2)
-        set_cell_text(cells[1], "☑" if checklist.get(key) else "☐", font_size=8.2)
-
-
-def add_archive_check(doc: Document, deck: Dict[str, Any]) -> None:
-    add_heading(doc, "Final archive checklist")
-    items = [
-        "Download final PowerPoint.",
-        "Download this planning form if needed for local review/records.",
-        "Save draft JSON so the session can be revised later.",
-        "Save PowerPoint, DOCX planning form, and JSON draft to GitHub archive.",
-        "Confirm speaker notes appear in PowerPoint presenter view.",
-    ]
-    for item in items:
-        p = doc.add_paragraph(style="List Bullet")
-        p.paragraph_format.space_after = Pt(2)
-        run = p.add_run(item)
-        run.font.name = "Aptos"
-        run.font.size = Pt(9)
-
-
-def build_docx(deck: Dict[str, Any]) -> bytes:
-    """Build the Word planning form and return DOCX bytes."""
-    doc = Document()
-    configure_document(doc)
-    add_title_block(doc, deck)
-    add_objectives(doc, deck)
-    add_storyboard(doc, deck)
-    add_mentor_review(doc, deck)
-    add_archive_check(doc, deck)
-
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    return buffer.getvalue()

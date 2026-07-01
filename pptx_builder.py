@@ -1,10 +1,7 @@
-"""
-PowerPoint builder for the Presentation Builder app.
+"""PowerPoint export for the Presentation PowerPoint Builder.
 
-This module is deliberately separate from app.py so the Streamlit UI stays clean.
-It creates the PPTX and then post-processes the Office Open XML package to add
-real PowerPoint speaker notes, because python-pptx does not currently expose a
-speaker-notes authoring API.
+The visible deck is intentionally clean: presentation identity appears on the
+Title slide only. Speaker-note text is injected into real PowerPoint notes.
 """
 
 from __future__ import annotations
@@ -18,17 +15,17 @@ from typing import Any, Dict, List, Tuple
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.util import Inches, Pt
 
 from deck_model import OBJECTIVE_EXAMPLES, slide_output_title, split_nonempty_lines
 
-# Office XML namespaces.
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
 ET.register_namespace("", REL_NS)
 ET.register_namespace("p", P_NS)
 ET.register_namespace("r", R_NS)
@@ -36,28 +33,63 @@ ET.register_namespace("a", A_NS)
 
 TITLE_BLUE = (31, 78, 121)
 LIGHT_BLUE = (234, 242, 250)
-PALE_BLUE = (242, 246, 250)
-GRAY_TEXT = (65, 65, 65)
+PALE_BLUE = (248, 251, 254)
+GRAY_TEXT = (80, 80, 80)
 BODY_TEXT = (35, 35, 35)
 BORDER_BLUE = (185, 205, 225)
+WHITE = (255, 255, 255)
+
+
+# -----------------------------------------------------------------------------
+# Basic PowerPoint helpers
+# -----------------------------------------------------------------------------
 
 
 def _rgb(color: Tuple[int, int, int]) -> RGBColor:
-    return RGBColor(color[0], color[1], color[2])
+    return RGBColor(*color)
 
 
-def add_textbox(slide, text: str, x, y, w, h, font_size: int = 22, bold: bool = False, color: Tuple[int, int, int] = BODY_TEXT):
-    box = slide.shapes.add_textbox(x, y, w, h)
+def _safe_text(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def add_textbox(
+    slide,
+    text: Any,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    font_size: int = 22,
+    bold: bool = False,
+    color: Tuple[int, int, int] = BODY_TEXT,
+    align=PP_ALIGN.LEFT,
+    fill: Tuple[int, int, int] | None = None,
+    margin: float = 0.08,
+):
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     frame = box.text_frame
     frame.word_wrap = True
     frame.clear()
+    frame.margin_left = Inches(margin)
+    frame.margin_right = Inches(margin)
+    frame.margin_top = Inches(margin)
+    frame.margin_bottom = Inches(margin)
+    frame.vertical_anchor = MSO_ANCHOR.TOP
+
     p = frame.paragraphs[0]
+    p.alignment = align
     run = p.add_run()
-    run.text = text or ""
+    run.text = _safe_text(text)
     run.font.name = "Aptos"
     run.font.size = Pt(font_size)
     run.font.bold = bold
     run.font.color.rgb = _rgb(color)
+
+    if fill is not None:
+        box.fill.solid()
+        box.fill.fore_color.rgb = _rgb(fill)
+        box.line.color.rgb = _rgb(fill)
     return box
 
 
@@ -76,33 +108,46 @@ def add_title_bar(slide, title: str, subtitle: str = "") -> None:
     run.font.name = "Aptos Display"
     run.font.size = Pt(23)
     run.font.bold = True
-    run.font.color.rgb = RGBColor(255, 255, 255)
+    run.font.color.rgb = _rgb(WHITE)
 
     if subtitle:
-        add_textbox(slide, subtitle, Inches(0.55), Inches(0.78), Inches(12.2), Inches(0.35), 11, False, (85, 85, 85))
+        add_textbox(slide, subtitle, 0.55, 0.78, 12.2, 0.35, 11, False, GRAY_TEXT)
 
 
-def add_body_lines(slide, lines: List[str], x, y, w, h, font_size: int = 22) -> None:
-    box = slide.shapes.add_textbox(x, y, w, h)
+def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: float, font_size: int = 22) -> None:
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     frame = box.text_frame
     frame.word_wrap = True
     frame.clear()
+    frame.margin_left = Inches(0.12)
+    frame.margin_right = Inches(0.08)
+    frame.margin_top = Inches(0.06)
+    frame.margin_bottom = Inches(0.06)
+
     if not lines:
         lines = ["Add slide content here."]
+
     for idx, line in enumerate(lines):
         p = frame.paragraphs[0] if idx == 0 else frame.add_paragraph()
-        p.text = line
+        p.text = line if line.startswith(("•", "-", "1.", "2.", "3.", "A.", "B.")) else f"• {line}"
         p.level = 0
         p.font.name = "Aptos"
         p.font.size = Pt(font_size)
+        p.font.color.rgb = _rgb(BODY_TEXT)
         p.space_after = Pt(7)
 
 
-def add_footer(slide, deck: Dict[str, Any]) -> None:
-    meta = deck.get("metadata", {})
-    footer = " · ".join(part for part in [meta.get("presenter", ""), meta.get("session_date", ""), meta.get("audience", "")] if part)
-    if footer:
-        add_textbox(slide, footer, Inches(0.55), Inches(7.05), Inches(12.0), Inches(0.24), 9, False, (110, 110, 110))
+def add_section_panel(slide, x: float, y: float, w: float, h: float):
+    panel = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = _rgb(PALE_BLUE)
+    panel.line.color.rgb = _rgb(BORDER_BLUE)
+    return panel
+
+
+# -----------------------------------------------------------------------------
+# Slide renderers
+# -----------------------------------------------------------------------------
 
 
 def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any]) -> None:
@@ -112,89 +157,66 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
     slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
 
     title = meta.get("presentation_title") or slide_data.get("title") or "Untitled Presentation"
-    presenter = meta.get("presenter", "")
-    date = meta.get("session_date", "")
-    audience = meta.get("audience", "")
-    talk_type = meta.get("presentation_type", "")
+    presenter = meta.get("presenter") or "Presenter not entered"
+    date = meta.get("session_date") or "Date not entered"
+    audience = meta.get("audience") or "Audience not entered"
+    talk_type = meta.get("presentation_type") or "Presentation type not entered"
 
-    add_textbox(slide, title, Inches(0.75), Inches(1.22), Inches(11.8), Inches(1.3), 34, True, TITLE_BLUE)
-    info_lines = [line for line in [presenter, date, audience, talk_type] if line]
-    add_textbox(slide, "\n".join(info_lines), Inches(0.8), Inches(2.9), Inches(8.8), Inches(1.1), 18, False, GRAY_TEXT)
+    add_textbox(slide, title, 0.75, 1.10, 11.8, 1.25, 34, True, TITLE_BLUE)
+    add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.65, 8.8, 1.15, 18, False, GRAY_TEXT)
 
-    core_question = meta.get("core_question", "")
-    if core_question:
-        panel = slide.shapes.add_shape(1, Inches(0.8), Inches(4.5), Inches(11.6), Inches(1.08))
-        panel.fill.solid()
-        panel.fill.fore_color.rgb = _rgb(LIGHT_BLUE)
-        panel.line.color.rgb = _rgb(BORDER_BLUE)
-        add_textbox(slide, "Core question", Inches(1.05), Inches(4.65), Inches(2.3), Inches(0.28), 13, True, TITLE_BLUE)
-        add_textbox(slide, core_question, Inches(1.05), Inches(4.97), Inches(10.9), Inches(0.38), 17, False, (45, 45, 45))
+    core_question = _safe_text(meta.get("core_question", "")).strip()
+    story_arc = _safe_text(meta.get("story_arc", "")).strip()
+    if core_question or story_arc:
+        add_section_panel(slide, 0.80, 4.25, 11.75, 1.55)
+        if core_question:
+            add_textbox(slide, "Core question", 1.05, 4.42, 2.5, 0.28, 13, True, TITLE_BLUE)
+            add_textbox(slide, core_question, 1.05, 4.73, 10.9, 0.36, 17, False, BODY_TEXT)
+        if story_arc:
+            add_textbox(slide, "Story arc", 1.05, 5.16, 2.5, 0.28, 13, True, TITLE_BLUE)
+            add_textbox(slide, story_arc, 1.05, 5.46, 10.9, 0.32, 14, False, BODY_TEXT)
 
 
 def render_objectives_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_title_bar(slide, slide_output_title(deck, slide_data, index))
     objectives = split_nonempty_lines(slide_data.get("body", "")) or OBJECTIVE_EXAMPLES[:3]
-    add_body_lines(slide, objectives, Inches(0.85), Inches(1.35), Inches(11.5), Inches(4.9), 24)
-    add_footer(slide, deck)
+    add_body_lines(slide, objectives, 0.85, 1.35, 11.5, 4.9, 24)
+
+
+def render_disclosures_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_title_bar(slide, slide_output_title(deck, slide_data, index))
+    disclosures = split_nonempty_lines(slide_data.get("body", "")) or ["I have no relevant financial or non-financial disclosures."]
+    add_body_lines(slide, disclosures, 0.95, 1.55, 11.0, 4.2, 23)
 
 
 def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     title = slide_output_title(deck, slide_data, index)
-    subtitle = slide_data.get("subtitle", "")
+    subtitle = _safe_text(slide_data.get("subtitle", "")).strip()
     add_title_bar(slide, title, subtitle)
 
     body_lines = split_nonempty_lines(slide_data.get("body", ""))
-    visual_plan = (slide_data.get("visual_plan") or "").strip()
-    discussion = (slide_data.get("discussion_prompt") or "").strip()
+    visual_plan = _safe_text(slide_data.get("visual_plan", "")).strip()
+    discussion = _safe_text(slide_data.get("discussion_prompt", "")).strip()
 
     if visual_plan or discussion:
-        add_body_lines(slide, body_lines, Inches(0.75), Inches(1.25), Inches(7.65), Inches(4.95), 22)
-        panel = slide.shapes.add_shape(1, Inches(8.75), Inches(1.2), Inches(3.85), Inches(4.95))
-        panel.fill.solid()
-        panel.fill.fore_color.rgb = _rgb(PALE_BLUE)
-        panel.line.color.rgb = _rgb(BORDER_BLUE)
+        add_body_lines(slide, body_lines, 0.75, 1.24, 7.7, 5.35, 21)
+        add_section_panel(slide, 8.75, 1.20, 3.85, 5.35)
         y = 1.45
         if visual_plan:
-            add_textbox(slide, "Visual / evidence plan", Inches(9.05), Inches(y), Inches(3.3), Inches(0.28), 13, True, TITLE_BLUE)
-            add_textbox(slide, visual_plan, Inches(9.05), Inches(y + 0.34), Inches(3.3), Inches(1.65), 13, False, (40, 40, 40))
-            y += 2.25
+            add_textbox(slide, "Visual / evidence plan", 9.05, y, 3.3, 0.28, 13, True, TITLE_BLUE)
+            add_textbox(slide, visual_plan, 9.05, y + 0.35, 3.3, 1.75, 13, False, BODY_TEXT)
+            y += 2.3
         if discussion:
-            add_textbox(slide, "Audience prompt", Inches(9.05), Inches(y), Inches(3.3), Inches(0.28), 13, True, TITLE_BLUE)
-            add_textbox(slide, discussion, Inches(9.05), Inches(y + 0.34), Inches(3.3), Inches(1.45), 13, False, (40, 40, 40))
+            add_textbox(slide, "Discussion prompt", 9.05, y, 3.3, 0.28, 13, True, TITLE_BLUE)
+            add_textbox(slide, discussion, 9.05, y + 0.35, 3.3, 1.75, 13, False, BODY_TEXT)
     else:
-        add_body_lines(slide, body_lines, Inches(0.85), Inches(1.3), Inches(11.6), Inches(4.95), 23)
-
-    add_footer(slide, deck)
-
-
-def render_mentor_review_slide(prs: Presentation, deck: Dict[str, Any]) -> None:
-    mr = deck.get("mentor_review", {})
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title_bar(slide, "Mentor review")
-
-    lines = [
-        f"Mentor: {mr.get('mentor_name') or 'Not listed'}",
-        f"Review status: {mr.get('review_status') or 'Not sent'}",
-    ]
-    if mr.get("review_completed_date"):
-        lines.append(f"Completed: {mr['review_completed_date']}")
-    if mr.get("mentor_approval_statement"):
-        lines.append(f"Approval statement: {mr['mentor_approval_statement']}")
-
-    feedback = split_nonempty_lines(mr.get("mentor_feedback", ""))
-    if feedback:
-        lines.append("")
-        lines.append("Mentor feedback summary:")
-        lines.extend(feedback[:5])
-
-    add_body_lines(slide, lines, Inches(0.85), Inches(1.3), Inches(11.7), Inches(5.0), 20)
-    add_footer(slide, deck)
+        add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 5.25, 22)
 
 
 def build_pptx(deck: Dict[str, Any]) -> bytes:
-    """Build the presentation and return PPTX bytes."""
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -202,21 +224,18 @@ def build_pptx(deck: Dict[str, Any]) -> bytes:
     speaker_notes: List[str] = []
     output_index = 0
     for slide_data in deck.get("slides", []):
-        if not slide_data.get("include", True):
-            continue
         output_index += 1
+        kind = slide_data.get("slide_kind")
         role = slide_data.get("role")
-        if role == "Title":
+        if kind == "title" or role == "Title":
             render_title_slide(prs, deck, slide_data)
-        elif role == "Objectives":
+        elif kind == "objectives" or role == "Objectives":
             render_objectives_slide(prs, deck, slide_data, output_index)
+        elif kind == "disclosures" or role == "Disclosures":
+            render_disclosures_slide(prs, deck, slide_data, output_index)
         else:
             render_standard_slide(prs, deck, slide_data, output_index)
-        speaker_notes.append(slide_data.get("speaker_notes", ""))
-
-    if deck.get("mentor_review", {}).get("include_mentor_review_slide"):
-        render_mentor_review_slide(prs, deck)
-        speaker_notes.append("Internal mentor-review slide. Remove before final presentation if not intended for learners.")
+        speaker_notes.append(_safe_text(slide_data.get("speaker_notes", "")))
 
     buffer = io.BytesIO()
     prs.save(buffer)
@@ -268,7 +287,7 @@ def _notes_master_xml() -> bytes:
       </p:sp>
     </p:spTree>
   </p:cSld>
-  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHLink"/>
 </p:notesMaster>'''.encode("utf-8")
 
 

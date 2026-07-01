@@ -1,54 +1,55 @@
 # Pediatric Residency Presentation Builder
 
-A Streamlit app for building standardized, story-driven PowerPoint presentations with:
+A Streamlit app for building standardized, story-driven PowerPoint presentations.
 
-- separate `pptx_builder.py` PowerPoint exporter
-- separate `docx_builder.py` Word planning-form exporter
-- real PowerPoint speaker notes
-- Bloom's taxonomy objective helper
-- disclosures slide
-- flexible extra slides, including unknown/blank slide titles
-- mentor review checklist and optional mentor-review slide
-- GitHub save/load for JSON drafts, PowerPoint files, and Word planning forms
+## What this version does
 
-## Files
+- Keeps `app.py` as the Streamlit front end.
+- Uses `deck_model.py` for the shared slide schema and defaults.
+- Uses `pptx_builder.py` for PowerPoint export.
+- Uses `docx_builder.py` for the mentor review Word document.
+- Uses `github_storage.py` for GitHub archive save/load.
+- Exports real PowerPoint speaker notes.
+- Exports every slide automatically. There is no include/exclude checkbox.
+- Keeps presentation identity on the exported title slide only, not as a footer on every slide.
+- Uses the mentor review DOCX as the place for mentor critiques. There is no mentor-review form inside the app.
+- Removes local JSON upload/download buttons. Draft JSON is stored only in GitHub.
 
-```text
-app.py              # Streamlit UI only
-deck_model.py       # Shared schema, defaults, constants, helpers
-pptx_builder.py     # PowerPoint builder and real speaker-note injection
-docx_builder.py     # Word planning-form builder
-github_storage.py   # GitHub save/load helpers
-requirements.txt
-README.md
+## GitHub storage setup
+
+Create `.streamlit/secrets.toml` with:
+
+```toml
+[github]
+token = "ghp_your_token_here"
+repo = "your_username/your_repo"
+branch = "main"
+base_path = "presentation_archive"
 ```
 
-## Local run
+The app saves each presentation as:
+
+```text
+presentation_archive/YYYY-MM-DD_presenter_title/draft.json
+presentation_archive/YYYY-MM-DD_presenter_title/presentation.pptx
+presentation_archive/YYYY-MM-DD_presenter_title/mentor_review.docx
+```
+
+## Run locally
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Streamlit secrets for GitHub
+## Suggested workflow
 
-Add this to Streamlit secrets:
-
-```toml
-GITHUB_TOKEN = "ghp_your_token"
-GITHUB_REPO = "your_username/your_repo"
-GITHUB_BRANCH = "main"
-GITHUB_FOLDER = "presentation_archive"
-```
-
-The app saves one folder per presentation:
-
-```text
-presentation_archive/YYYY-MM-DD_presenter_title/draft.json
-presentation_archive/YYYY-MM-DD_presenter_title/presentation.pptx
-presentation_archive/YYYY-MM-DD_presenter_title/planning_form.docx
-```
+1. Build and revise the presentation in the app.
+2. Download the mentor Word document and send it for comments/Track Changes.
+3. Make mentor-requested revisions back in the app.
+4. Export PowerPoint.
+5. Save the full archive to GitHub.
 
 ## Notes
 
-The PowerPoint builder uses `python-pptx` for slide construction and then post-processes the PPTX Office Open XML package to add real speaker notes. The notes entered in the app should appear in PowerPoint presenter view.
+PowerPoint should only be used for minor spacing/layout tweaks after export. Major content changes should happen in the app so the GitHub draft remains the source of truth.
