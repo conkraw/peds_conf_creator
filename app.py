@@ -404,7 +404,7 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
     """Store one optional image per slide and send it to PowerPoint/GitHub."""
-    st.caption("Optional: upload a PNG/JPEG visual and it will appear on this PowerPoint slide.")
+    st.caption("Optional: upload a PNG/JPEG visual. When used, it will take up about half of the exported PowerPoint slide.")
     nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
     nonce = nonce_map.get(slide["id"], 0)
     uploaded = st.file_uploader(
@@ -481,13 +481,10 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     body = widget_text(slide, "body", "Slide text", height=190, multiline=True, help_text="Use one idea per line. Short lines work best on slides.")
     st.caption(f"{count_words(body)} words. For readability, try to keep most slides under ~45 words.")
 
-    col3, col4 = st.columns(2)
-    with col3:
-        widget_text(slide, "visual_plan", "Visual / evidence plan", height=125, multiline=True, help_text="Describe a figure, table, image, graph, or data point to include.")
-        render_visual_upload(slide)
-    with col4:
-        widget_text(slide, "discussion_prompt", "Discussion prompt", height=125, multiline=True, help_text="Question to ask the audience, if useful.")
+    st.markdown("#### Optional slide visual")
+    render_visual_upload(slide)
 
+    widget_text(slide, "discussion_prompt", "Discussion prompt", height=125, multiline=True, help_text="Question to ask the audience, if useful.")
     widget_text(slide, "speaker_notes", "Speaker notes exported into PowerPoint", height=170, multiline=True)
 
 

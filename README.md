@@ -57,3 +57,6 @@ streamlit run app.py
 ## Notes
 
 PowerPoint should only be used for minor spacing/layout tweaks after export. Major content changes should happen in the app so the GitHub draft remains the source of truth.
+
+
+Update v3.3: removed the Visual / evidence plan editor box; uploaded slide visuals now occupy about half of the exported PowerPoint slide.

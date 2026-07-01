@@ -336,7 +336,6 @@ def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str
     _add_field_row(table, "Title", _safe_text(slide.get("title")))
     _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
     _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
-    _add_field_row(table, "Visual plan", _safe_text(slide.get("visual_plan")))
     _add_image_row(table, slide)
     _add_field_row(table, "Discussion prompt", _safe_text(slide.get("discussion_prompt")))
     _add_field_row(table, "Speaker notes", _safe_text(slide.get("speaker_notes")))
@@ -401,7 +400,7 @@ def build_plain_text_summary(deck: Dict[str, Any]) -> str:
     parts = [identity_title(deck), identity_subtitle(deck), ""]
     for idx, slide in enumerate(deck.get("slides", []), start=1):
         parts.append(f"Slide {idx}: {slide_output_title(deck, slide, idx)}")
-        for key in ["body", "visual_plan", "discussion_prompt", "speaker_notes"]:
+        for key in ["body", "discussion_prompt", "speaker_notes"]:
             value = _safe_text(slide.get(key))
             if value:
                 parts.append(f"{key}: {value}")

@@ -247,38 +247,33 @@ def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: D
     add_title_bar(slide, title, subtitle)
 
     body_lines = split_nonempty_lines(slide_data.get("body", ""))
-    visual_plan = _safe_text(slide_data.get("visual_plan", "")).strip()
     discussion = _safe_text(slide_data.get("discussion_prompt", "")).strip()
     image_data = visual_image_bytes(slide_data)
-    has_sidebar = bool(visual_plan or discussion or image_data)
 
-    if has_sidebar:
-        add_body_lines(slide, body_lines, 0.75, 1.24, 7.7, 5.35, 21)
-        add_section_panel(slide, 8.75, 1.20, 3.85, 5.35)
-        y = 1.42
+    if image_data:
+        # When a visual is uploaded, let it occupy about half of the slide.
+        text_x = 0.75
+        text_w = 5.55
+        image_x = 6.65
+        image_w = 5.95
+        top_y = 1.22
+        content_h = 5.45
 
-        if image_data:
-            image_info = get_visual_image(slide_data)
-            label = "Uploaded visual"
-            if image_info.get("filename"):
-                label = f"Uploaded visual: {image_info['filename']}"
-            add_textbox(slide, label, 9.05, y, 3.3, 0.28, 11, True, TITLE_BLUE)
+        if discussion:
+            add_body_lines(slide, body_lines, text_x, top_y, text_w, 3.85, 20)
+            add_textbox(slide, "Discussion prompt", text_x, 5.18, text_w, 0.28, 13, True, TITLE_BLUE)
+            add_textbox(slide, discussion, text_x, 5.50, text_w, 0.92, 12, False, BODY_TEXT, fill=PALE_BLUE)
+        else:
+            add_body_lines(slide, body_lines, text_x, top_y, text_w, content_h, 21)
 
-            text_items = [item for item in [visual_plan, discussion] if item]
-            image_height = 2.35 if text_items else 4.45
-            add_image_fit(slide, image_data, 9.05, y + 0.34, 3.3, image_height)
-            y += image_height + 0.70
-
-        if visual_plan and y < 6.10:
-            add_textbox(slide, "Visual / evidence plan", 9.05, y, 3.3, 0.28, 13, True, TITLE_BLUE)
-            text_height = 1.20 if discussion else max(0.75, 6.20 - (y + 0.35))
-            add_textbox(slide, visual_plan, 9.05, y + 0.35, 3.3, text_height, 12, False, BODY_TEXT)
-            y += text_height + 0.55
-        if discussion and y < 6.10:
-            add_textbox(slide, "Discussion prompt", 9.05, y, 3.3, 0.28, 13, True, TITLE_BLUE)
-            add_textbox(slide, discussion, 9.05, y + 0.35, 3.3, max(0.75, 6.20 - (y + 0.35)), 12, False, BODY_TEXT)
+        add_image_fit(slide, image_data, image_x, top_y, image_w, content_h)
     else:
-        add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 5.25, 22)
+        if discussion:
+            add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 4.45, 22)
+            add_textbox(slide, "Discussion prompt", 0.95, 5.95, 2.3, 0.28, 13, True, TITLE_BLUE)
+            add_textbox(slide, discussion, 0.95, 6.24, 11.2, 0.50, 12, False, BODY_TEXT, fill=PALE_BLUE)
+        else:
+            add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 5.25, 22)
 
 
 def build_pptx(deck: Dict[str, Any]) -> bytes:
