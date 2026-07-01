@@ -63,3 +63,6 @@ Update v3.3: removed the Visual / evidence plan editor box; uploaded slide visua
 
 
 Update v3.4: mentor review uploaded visuals are centered, constrained to fit within the table cell, and no longer display the uploaded file name.
+
+
+Update v3.5: fixed Streamlit sidebar slide-selection state so Add after/Add at end/Duplicate/Delete no longer mutate the radio widget state after it renders.

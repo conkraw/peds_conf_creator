@@ -103,6 +103,19 @@ def sync_selected_slide_from_radio() -> None:
         st.session_state.selected_slide_id = selected
 
 
+def queue_slide_selection(slide_id: str) -> None:
+    """Select a slide on the next rerun without mutating the radio widget state.
+
+    Streamlit raises an exception if code changes st.session_state for a widget
+    key after that widget has already been rendered in the same run. The sidebar
+    radio uses the key selected_slide_radio, so buttons such as Add after,
+    Duplicate, Delete, Load, and Start blank store the requested selection here
+    and the sidebar applies it before the radio is rendered on the next run.
+    """
+    st.session_state.selected_slide_id = slide_id
+    st.session_state.pending_selected_slide_id = slide_id
+
+
 def get_visual_image(slide: Dict[str, Any]) -> Dict[str, str]:
     image = slide.get("visual_image", {})
     return image if isinstance(image, dict) else {}
@@ -220,6 +233,11 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
         slide_ids = [slide["id"] for slide in deck["slides"]]
         id_to_label = {slide["id"]: slide_nav_label(i + 1, slide) for i, slide in enumerate(deck["slides"])}
 
+        pending_slide_id = st.session_state.pop("pending_selected_slide_id", None)
+        if pending_slide_id in slide_ids:
+            st.session_state.selected_slide_id = pending_slide_id
+            st.session_state.selected_slide_radio = pending_slide_id
+
         if st.session_state.selected_slide_id not in slide_ids:
             st.session_state.selected_slide_id = slide_ids[0]
         if st.session_state.get("selected_slide_radio") not in slide_ids:
@@ -251,15 +269,13 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
             if st.button("Add after", use_container_width=True):
                 slide = new_slide(new_role, new_title, new_prompt)
                 deck["slides"].insert(selected_index + 1, slide)
-                st.session_state.selected_slide_id = slide["id"]
-                st.session_state.selected_slide_radio = slide["id"]
+                queue_slide_selection(slide["id"])
                 st.rerun()
         with col2:
             if st.button("Add at end", use_container_width=True):
                 slide = new_slide(new_role, new_title, new_prompt)
                 deck["slides"].append(slide)
-                st.session_state.selected_slide_id = slide["id"]
-                st.session_state.selected_slide_radio = slide["id"]
+                queue_slide_selection(slide["id"])
                 st.rerun()
 
         st.divider()
@@ -287,8 +303,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                     payload = load_json_from_github(label_to_path[selected_archive])
                     st.session_state.deck = normalize_loaded_deck(payload)
                     st.session_state.archive_path = payload.get("archive_path", label_to_path[selected_archive])
-                    st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
-                    st.session_state.selected_slide_radio = st.session_state.selected_slide_id
+                    queue_slide_selection(st.session_state.deck["slides"][0]["id"])
                     clear_widget_state()
                     st.success("Loaded from GitHub.")
                     st.rerun()
@@ -298,8 +313,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
         st.divider()
         if st.button("Start blank presentation", use_container_width=True):
             st.session_state.deck = default_deck()
-            st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
-            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
+            queue_slide_selection(st.session_state.deck["slides"][0]["id"])
             st.session_state.archive_path = ""
             clear_widget_state()
             st.rerun()
@@ -342,8 +356,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         )
         if st.button("Replace story scaffold with this type", use_container_width=True):
             deck["slides"] = default_deck(meta["presentation_type"])["slides"]
-            st.session_state.selected_slide_id = deck["slides"][0]["id"]
-            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
+            queue_slide_selection(deck["slides"][0]["id"])
             clear_widget_state()
             st.rerun()
 
@@ -398,8 +411,7 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     copied["required"] = False
     copied["title"] = f"{copied.get('title') or 'Untitled'} copy"
     deck["slides"].insert(index + 1, copied)
-    st.session_state.selected_slide_id = copied["id"]
-    st.session_state.selected_slide_radio = copied["id"]
+    queue_slide_selection(copied["id"])
 
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
@@ -460,8 +472,7 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     with action_cols[3]:
         if st.button("Delete", use_container_width=True, disabled=bool(slide.get("required", False))):
             deck["slides"].remove(slide)
-            st.session_state.selected_slide_id = deck["slides"][max(0, slide_index - 2)]["id"]
-            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
+            queue_slide_selection(deck["slides"][max(0, slide_index - 2)]["id"])
             clear_widget_state()
             st.rerun()
 
