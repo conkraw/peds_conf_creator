@@ -416,7 +416,8 @@ def render_slide_editor(deck: Dict[str, Any]) -> None:
 # -----------------------------------------------------------------------------
 
 
-def render_export_row(deck: Dict[str, Any]) -> None:
+def render_export_panel(deck: Dict[str, Any]) -> None:
+    """Render stacked export/archive controls in the right-side panel."""
     try:
         pptx_bytes = build_pptx(deck)
         mentor_docx_bytes = build_mentor_review_docx(deck)
@@ -424,48 +425,45 @@ def render_export_row(deck: Dict[str, Any]) -> None:
         st.error(f"Could not build exports: {exc}")
         return
 
-    left, middle, right = st.columns(3, gap="medium")
+    st.markdown("### Export / archive")
 
-    with left:
-        with st.container(border=True):
-            st.markdown("#### Mentor Word document")
-            st.caption("Give this to the mentor for comments or Track Changes. Critiques are not stored in the app.")
-            st.download_button(
-                "Download mentor DOCX",
-                data=mentor_docx_bytes,
-                file_name=ARCHIVE_DOCX_NAME,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
-            )
+    with st.container(border=True):
+        st.markdown("#### Mentor Word document")
+        st.caption("Give this to the mentor for comments or Track Changes. Critiques are not stored in the app.")
+        st.download_button(
+            "Download mentor DOCX",
+            data=mentor_docx_bytes,
+            file_name=ARCHIVE_DOCX_NAME,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
 
-    with middle:
-        with st.container(border=True):
-            st.markdown("#### PowerPoint")
-            st.caption("All slides export automatically. Speaker notes go into real PowerPoint notes.")
-            st.download_button(
-                "Download PPTX",
-                data=pptx_bytes,
-                file_name=ARCHIVE_PPTX_NAME,
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                use_container_width=True,
-            )
+    with st.container(border=True):
+        st.markdown("#### PowerPoint")
+        st.caption("All slides export automatically. Speaker notes go into real PowerPoint notes.")
+        st.download_button(
+            "Download PPTX",
+            data=pptx_bytes,
+            file_name=ARCHIVE_PPTX_NAME,
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
 
-    with right:
-        with st.container(border=True):
-            st.markdown("#### GitHub archive")
-            st.caption("Saves draft.json, presentation.pptx, and mentor_review.docx to GitHub.")
-            if st.button("Save all to GitHub", use_container_width=True):
-                try:
-                    results = save_archive_to_github(deck, pptx_bytes, mentor_docx_bytes, st.session_state.get("archive_path", ""))
-                    if results:
-                        # Path looks like base/date_presenter_title/file.ext; archive folder is the parent.
-                        st.session_state.archive_path = results[0].path.rsplit("/", 1)[0]
-                    st.success("Saved to GitHub archive.")
-                    for result in results:
-                        if result.html_url:
-                            st.caption(result.path)
-                except GitHubStorageError as exc:
-                    st.error(str(exc))
+    with st.container(border=True):
+        st.markdown("#### GitHub archive")
+        st.caption("Saves draft.json, presentation.pptx, and mentor_review.docx to GitHub.")
+        if st.button("Save all to GitHub", use_container_width=True):
+            try:
+                results = save_archive_to_github(deck, pptx_bytes, mentor_docx_bytes, st.session_state.get("archive_path", ""))
+                if results:
+                    # Path looks like base/date_presenter_title/file.ext; archive folder is the parent.
+                    st.session_state.archive_path = results[0].path.rsplit("/", 1)[0]
+                st.success("Saved to GitHub archive.")
+                for result in results:
+                    if result.html_url:
+                        st.caption(result.path)
+            except GitHubStorageError as exc:
+                st.error(str(exc))
 
 
 # -----------------------------------------------------------------------------
@@ -483,7 +481,6 @@ def main() -> None:
 
     st.title(APP_TITLE)
     render_identity_strip(deck)
-    render_export_row(deck)
 
     problems = validation_messages(deck)
     if problems:
@@ -493,17 +490,12 @@ def main() -> None:
     else:
         st.success("Readiness check passed. The presentation has the core fields needed for export.")
 
-    editor_col, preview_col = st.columns([2.1, 0.85], gap="large")
+    editor_col, export_col = st.columns([2.1, 0.85], gap="large")
     with editor_col:
         render_slide_editor(deck)
 
-    with preview_col:
-        st.markdown("### Current deck")
-        st.caption("Every slide listed here will export.")
-        for i, slide in enumerate(deck.get("slides", []), start=1):
-            marker = "➡️" if slide.get("id") == st.session_state.selected_slide_id else ""
-            st.write(f"{marker} **{i}. {slide.get('role', 'Slide')}**")
-            st.caption(slide.get("title") or "Untitled")
+    with export_col:
+        render_export_panel(deck)
 
 
 if __name__ == "__main__":
