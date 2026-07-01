@@ -6,6 +6,7 @@ critiques; mentors can use Word comments or Track Changes in the generated DOCX.
 
 from __future__ import annotations
 
+import base64
 from io import BytesIO
 from typing import Any, Dict, List
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -41,6 +42,26 @@ TWIPS_PER_INCH = 1440
 
 def _safe_text(value: Any) -> str:
     return "" if value is None else str(value).strip()
+
+
+def _visual_image_bytes(slide: Dict[str, Any]) -> bytes | None:
+    image = slide.get("visual_image", {})
+    if not isinstance(image, dict):
+        return None
+    encoded = image.get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def _visual_image_filename(slide: Dict[str, Any]) -> str:
+    image = slide.get("visual_image", {})
+    if not isinstance(image, dict):
+        return ""
+    return _safe_text(image.get("filename"))
 
 
 def _body_width_inches(doc: Document) -> float:
@@ -267,6 +288,40 @@ def _add_field_row(table, label: str, value: str, label_fill: str = HEADER_GRAY)
     _write_cell_text(value_cell, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_MUTED if not value else TEXT_DARK)
 
 
+def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) -> None:
+    image_bytes = _visual_image_bytes(slide)
+    filename = _visual_image_filename(slide)
+    if not image_bytes:
+        _add_field_row(table, "Uploaded visual", "[none]", label_fill)
+        return
+
+    row = table.add_row()
+    label_cell, value_cell = row.cells
+    _shade_cell(label_cell, label_fill)
+    _shade_cell(value_cell, WHITE)
+    _set_cell_borders(label_cell)
+    _set_cell_borders(value_cell)
+    _set_cell_margins(label_cell)
+    _set_cell_margins(value_cell)
+    _write_cell_text(label_cell, "Uploaded visual", font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
+
+    _clear_cell(value_cell)
+    p = value_cell.paragraphs[0]
+    p.paragraph_format.space_after = Pt(4)
+    run = p.add_run(filename or "Uploaded visual")
+    run.font.name = DOC_FONT
+    run.font.size = Pt(8.5)
+    run.font.bold = True
+    run.font.color.rgb = TEXT_MUTED
+    try:
+        image_p = value_cell.add_paragraph()
+        image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        image_run = image_p.add_run()
+        image_run.add_picture(BytesIO(image_bytes), width=Inches(4.7))
+    except Exception:
+        value_cell.add_paragraph("[Uploaded visual could not be rendered in Word preview]")
+
+
 def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> None:
     title = slide_output_title(deck, slide, index)
     role = slide.get("role") or "Slide"
@@ -282,6 +337,7 @@ def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str
     _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
     _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
     _add_field_row(table, "Visual plan", _safe_text(slide.get("visual_plan")))
+    _add_image_row(table, slide)
     _add_field_row(table, "Discussion prompt", _safe_text(slide.get("discussion_prompt")))
     _add_field_row(table, "Speaker notes", _safe_text(slide.get("speaker_notes")))
     _add_field_row(table, "Mentor notes", "[Add comments here or use Word comments in the margin.]", PINK)

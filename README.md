@@ -10,6 +10,8 @@ A Streamlit app for building standardized, story-driven PowerPoint presentations
 - Uses `docx_builder.py` for the mentor review Word document.
 - Uses `github_storage.py` for GitHub archive save/load.
 - Exports real PowerPoint speaker notes.
+- Uses stable slide-ID navigation so sidebar radio buttons respond on one click, even when slide titles change.
+- Lets users upload one optional PNG/JPEG visual per content slide; uploaded visuals appear in the PowerPoint, mentor DOCX, and GitHub draft.
 - Exports every slide automatically. There is no include/exclude checkbox.
 - Keeps presentation identity on the exported title slide only, not as a footer on every slide.
 - Uses the mentor review DOCX as the place for mentor critiques. There is no mentor-review form inside the app.
@@ -34,6 +36,8 @@ presentation_archive/YYYY-MM-DD_presenter_title/draft.json
 presentation_archive/YYYY-MM-DD_presenter_title/presentation.pptx
 presentation_archive/YYYY-MM-DD_presenter_title/mentor_review.docx
 ```
+
+Uploaded slide visuals are stored inside `draft.json` as base64 so they reload from GitHub with the rest of the presentation. Keep images cropped/compressed when possible; the app limits uploads to 5 MB per image.
 
 ## Run locally
 

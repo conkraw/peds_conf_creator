@@ -15,6 +15,7 @@ There are no local JSON draft uploads/downloads. GitHub is the source of truth.
 
 from __future__ import annotations
 
+import base64
 import html
 import re
 from typing import Any, Dict, List
@@ -69,6 +70,10 @@ def initialize_state() -> None:
         st.session_state.deck = default_deck()
     if "selected_slide_id" not in st.session_state:
         st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
+    if "selected_slide_radio" not in st.session_state:
+        st.session_state.selected_slide_radio = st.session_state.selected_slide_id
+    if "visual_uploader_nonce" not in st.session_state:
+        st.session_state.visual_uploader_nonce = {}
     if "archive_path" not in st.session_state:
         st.session_state.archive_path = ""
     if "archive_results" not in st.session_state:
@@ -82,6 +87,40 @@ def get_selected_slide(deck: Dict[str, Any]) -> Dict[str, Any]:
             return slide
     st.session_state.selected_slide_id = deck["slides"][0]["id"]
     return deck["slides"][0]
+
+
+def sync_selected_slide_from_radio() -> None:
+    """Keep sidebar navigation single-click responsive.
+
+    The radio widget stores a stable slide ID, while format_func renders the
+    current human-readable label. This prevents the old double-click behavior
+    that can happen when radio options are dynamic labels and the user edits a
+    slide title.
+    """
+    selected = st.session_state.get("selected_slide_radio")
+    slide_ids = [slide.get("id") for slide in st.session_state.deck.get("slides", [])]
+    if selected in slide_ids:
+        st.session_state.selected_slide_id = selected
+
+
+def get_visual_image(slide: Dict[str, Any]) -> Dict[str, str]:
+    image = slide.get("visual_image", {})
+    return image if isinstance(image, dict) else {}
+
+
+def visual_image_bytes(slide: Dict[str, Any]) -> bytes | None:
+    image = get_visual_image(slide)
+    encoded = image.get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def has_uploaded_visual(slide: Dict[str, Any]) -> bool:
+    return visual_image_bytes(slide) is not None
 
 
 def slide_nav_label(index: int, slide: Dict[str, Any]) -> str:
@@ -103,8 +142,8 @@ def validation_messages(deck: Dict[str, Any]) -> List[str]:
             objective_count = len(split_nonempty_lines(slide.get("body", "")))
             if objective_count < 1:
                 messages.append(f"Slide {idx} objectives are blank.")
-        elif role != "Title" and not str(slide.get("body", "")).strip():
-            messages.append(f"Slide {idx} has no main slide text.")
+        elif role != "Title" and not str(slide.get("body", "")).strip() and not has_uploaded_visual(slide):
+            messages.append(f"Slide {idx} has no main slide text or uploaded visual.")
     return messages
 
 
@@ -178,10 +217,25 @@ def render_bloom_helper() -> None:
 def render_sidebar(deck: Dict[str, Any]) -> None:
     with st.sidebar:
         st.header("Slides")
-        labels = [slide_nav_label(i + 1, slide) for i, slide in enumerate(deck["slides"])]
-        current_index = next((i for i, slide in enumerate(deck["slides"]) if slide["id"] == st.session_state.selected_slide_id), 0)
-        selected_label = st.radio("Choose slide", labels, index=current_index, label_visibility="collapsed")
-        st.session_state.selected_slide_id = deck["slides"][labels.index(selected_label)]["id"]
+        slide_ids = [slide["id"] for slide in deck["slides"]]
+        id_to_label = {slide["id"]: slide_nav_label(i + 1, slide) for i, slide in enumerate(deck["slides"])}
+
+        if st.session_state.selected_slide_id not in slide_ids:
+            st.session_state.selected_slide_id = slide_ids[0]
+        if st.session_state.get("selected_slide_radio") not in slide_ids:
+            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
+
+        current_index = slide_ids.index(st.session_state.selected_slide_id)
+        st.radio(
+            "Choose slide",
+            slide_ids,
+            index=current_index,
+            format_func=lambda sid: id_to_label.get(sid, "Slide"),
+            key="selected_slide_radio",
+            on_change=sync_selected_slide_from_radio,
+            label_visibility="collapsed",
+        )
+        st.session_state.selected_slide_id = st.session_state.selected_slide_radio
 
         st.caption("All slides export to PowerPoint automatically.")
         st.divider()
@@ -198,12 +252,14 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                 slide = new_slide(new_role, new_title, new_prompt)
                 deck["slides"].insert(selected_index + 1, slide)
                 st.session_state.selected_slide_id = slide["id"]
+                st.session_state.selected_slide_radio = slide["id"]
                 st.rerun()
         with col2:
             if st.button("Add at end", use_container_width=True):
                 slide = new_slide(new_role, new_title, new_prompt)
                 deck["slides"].append(slide)
                 st.session_state.selected_slide_id = slide["id"]
+                st.session_state.selected_slide_radio = slide["id"]
                 st.rerun()
 
         st.divider()
@@ -232,6 +288,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                     st.session_state.deck = normalize_loaded_deck(payload)
                     st.session_state.archive_path = payload.get("archive_path", label_to_path[selected_archive])
                     st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
+                    st.session_state.selected_slide_radio = st.session_state.selected_slide_id
                     clear_widget_state()
                     st.success("Loaded from GitHub.")
                     st.rerun()
@@ -242,6 +299,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
         if st.button("Start blank presentation", use_container_width=True):
             st.session_state.deck = default_deck()
             st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
+            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
             st.session_state.archive_path = ""
             clear_widget_state()
             st.rerun()
@@ -285,6 +343,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         if st.button("Replace story scaffold with this type", use_container_width=True):
             deck["slides"] = default_deck(meta["presentation_type"])["slides"]
             st.session_state.selected_slide_id = deck["slides"][0]["id"]
+            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
             clear_widget_state()
             st.rerun()
 
@@ -340,6 +399,39 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     copied["title"] = f"{copied.get('title') or 'Untitled'} copy"
     deck["slides"].insert(index + 1, copied)
     st.session_state.selected_slide_id = copied["id"]
+    st.session_state.selected_slide_radio = copied["id"]
+
+
+def render_visual_upload(slide: Dict[str, Any]) -> None:
+    """Store one optional image per slide and send it to PowerPoint/GitHub."""
+    st.caption("Optional: upload a PNG/JPEG visual and it will appear on this PowerPoint slide.")
+    nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
+    nonce = nonce_map.get(slide["id"], 0)
+    uploaded = st.file_uploader(
+        "Upload visual image",
+        type=["png", "jpg", "jpeg"],
+        key=f"widget__{slide['id']}__visual_file__{nonce}",
+        help="Best for screenshots, figures you created, diagrams, or a focused data visual. Keep it under 5 MB so the GitHub draft stays lightweight.",
+    )
+    if uploaded is not None:
+        data = uploaded.getvalue()
+        if len(data) > 5 * 1024 * 1024:
+            st.error("This image is larger than 5 MB. Please compress or crop it before uploading.")
+        else:
+            slide["visual_image"] = {
+                "filename": uploaded.name,
+                "content_type": uploaded.type or "image/png",
+                "data_base64": base64.b64encode(data).decode("ascii"),
+            }
+
+    image_bytes = visual_image_bytes(slide)
+    image_info = get_visual_image(slide)
+    if image_bytes:
+        st.image(image_bytes, caption=image_info.get("filename", "Uploaded visual"), use_container_width=True)
+        if st.button("Remove uploaded visual", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
+            slide["visual_image"] = {}
+            nonce_map[slide["id"]] = nonce + 1
+            st.rerun()
 
 
 def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
@@ -369,6 +461,7 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         if st.button("Delete", use_container_width=True, disabled=bool(slide.get("required", False))):
             deck["slides"].remove(slide)
             st.session_state.selected_slide_id = deck["slides"][max(0, slide_index - 2)]["id"]
+            st.session_state.selected_slide_radio = st.session_state.selected_slide_id
             clear_widget_state()
             st.rerun()
 
@@ -391,6 +484,7 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     col3, col4 = st.columns(2)
     with col3:
         widget_text(slide, "visual_plan", "Visual / evidence plan", height=125, multiline=True, help_text="Describe a figure, table, image, graph, or data point to include.")
+        render_visual_upload(slide)
     with col4:
         widget_text(slide, "discussion_prompt", "Discussion prompt", height=125, multiline=True, help_text="Question to ask the audience, if useful.")
 

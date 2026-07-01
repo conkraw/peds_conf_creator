@@ -6,6 +6,7 @@ Title slide only. Speaker-note text is injected into real PowerPoint notes.
 
 from __future__ import annotations
 
+import base64
 import html
 import io
 import re
@@ -13,6 +14,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
 
+from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
@@ -145,6 +147,53 @@ def add_section_panel(slide, x: float, y: float, w: float, h: float):
     return panel
 
 
+def get_visual_image(slide_data: Dict[str, Any]) -> Dict[str, str]:
+    image = slide_data.get("visual_image", {})
+    return image if isinstance(image, dict) else {}
+
+
+def visual_image_bytes(slide_data: Dict[str, Any]) -> bytes | None:
+    encoded = get_visual_image(slide_data).get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def add_image_fit(slide, image_data: bytes, x: float, y: float, w: float, h: float) -> None:
+    """Add an uploaded image, preserving aspect ratio inside the given box."""
+    try:
+        with Image.open(io.BytesIO(image_data)) as img:
+            px_w, px_h = img.size
+    except Exception:
+        add_textbox(slide, "Uploaded visual could not be rendered", x, y, w, 0.5, 12, False, GRAY_TEXT, fill=LIGHT_BLUE)
+        return
+
+    if not px_w or not px_h:
+        return
+
+    img_ratio = px_w / px_h
+    box_ratio = w / h
+    if img_ratio >= box_ratio:
+        display_w = w
+        display_h = w / img_ratio
+    else:
+        display_h = h
+        display_w = h * img_ratio
+
+    left = x + (w - display_w) / 2
+    top = y + (h - display_h) / 2
+    slide.shapes.add_picture(
+        io.BytesIO(image_data),
+        Inches(left),
+        Inches(top),
+        width=Inches(display_w),
+        height=Inches(display_h),
+    )
+
+
 # -----------------------------------------------------------------------------
 # Slide renderers
 # -----------------------------------------------------------------------------
@@ -200,18 +249,34 @@ def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: D
     body_lines = split_nonempty_lines(slide_data.get("body", ""))
     visual_plan = _safe_text(slide_data.get("visual_plan", "")).strip()
     discussion = _safe_text(slide_data.get("discussion_prompt", "")).strip()
+    image_data = visual_image_bytes(slide_data)
+    has_sidebar = bool(visual_plan or discussion or image_data)
 
-    if visual_plan or discussion:
+    if has_sidebar:
         add_body_lines(slide, body_lines, 0.75, 1.24, 7.7, 5.35, 21)
         add_section_panel(slide, 8.75, 1.20, 3.85, 5.35)
-        y = 1.45
-        if visual_plan:
+        y = 1.42
+
+        if image_data:
+            image_info = get_visual_image(slide_data)
+            label = "Uploaded visual"
+            if image_info.get("filename"):
+                label = f"Uploaded visual: {image_info['filename']}"
+            add_textbox(slide, label, 9.05, y, 3.3, 0.28, 11, True, TITLE_BLUE)
+
+            text_items = [item for item in [visual_plan, discussion] if item]
+            image_height = 2.35 if text_items else 4.45
+            add_image_fit(slide, image_data, 9.05, y + 0.34, 3.3, image_height)
+            y += image_height + 0.70
+
+        if visual_plan and y < 6.10:
             add_textbox(slide, "Visual / evidence plan", 9.05, y, 3.3, 0.28, 13, True, TITLE_BLUE)
-            add_textbox(slide, visual_plan, 9.05, y + 0.35, 3.3, 1.75, 13, False, BODY_TEXT)
-            y += 2.3
-        if discussion:
+            text_height = 1.20 if discussion else max(0.75, 6.20 - (y + 0.35))
+            add_textbox(slide, visual_plan, 9.05, y + 0.35, 3.3, text_height, 12, False, BODY_TEXT)
+            y += text_height + 0.55
+        if discussion and y < 6.10:
             add_textbox(slide, "Discussion prompt", 9.05, y, 3.3, 0.28, 13, True, TITLE_BLUE)
-            add_textbox(slide, discussion, 9.05, y + 0.35, 3.3, 1.75, 13, False, BODY_TEXT)
+            add_textbox(slide, discussion, 9.05, y + 0.35, 3.3, max(0.75, 6.20 - (y + 0.35)), 12, False, BODY_TEXT)
     else:
         add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 5.25, 22)
 
