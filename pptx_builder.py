@@ -246,6 +246,10 @@ def visual_image_bytes(slide_data: Dict[str, Any]) -> bytes | None:
         return None
 
 
+def visual_uses_full_slide(slide_data: Dict[str, Any]) -> bool:
+    return bool(slide_data.get("visual_full_slide", False))
+
+
 def add_image_fit(slide, image_data: bytes, x: float, y: float, w: float, h: float) -> None:
     """Add an uploaded image, preserving aspect ratio inside the given box."""
     try:
@@ -297,15 +301,23 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
     image_data = visual_image_bytes(slide_data)
 
     if image_data:
-        # Split title slide: text on the left, optional visual on the right.
-        add_textbox(slide, title, 0.70, 0.92, 6.0, 1.25, 30, True, TITLE_BLUE)
-        add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.78, 2.30, 4.8, 1.35, 17, False, GRAY_TEXT)
-        add_section_panel(slide, 7.05, 0.95, 5.55, 5.05)
-        add_image_fit(slide, image_data, 7.25, 1.15, 5.15, 4.65)
+        if visual_uses_full_slide(slide_data):
+            # Full-title visual mode: use the image as the main slide visual and
+            # keep the required title information in a compact readable panel.
+            add_image_fit(slide, image_data, 0.35, 0.35, 12.65, 6.80)
+            add_section_panel(slide, 0.55, 0.70, 5.85, 2.65)
+            add_textbox(slide, title, 0.78, 0.95, 5.35, 0.95, 24, True, TITLE_BLUE, fill=PALE_BLUE)
+            add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.82, 1.95, 5.15, 1.05, 13, False, GRAY_TEXT, fill=PALE_BLUE)
+        else:
+            # Split title slide: text on the left, optional visual on the right.
+            add_textbox(slide, title, 0.70, 0.92, 6.0, 1.25, 30, True, TITLE_BLUE)
+            add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.78, 2.30, 4.8, 1.35, 17, False, GRAY_TEXT)
+            add_section_panel(slide, 7.05, 0.95, 5.55, 5.05)
+            add_image_fit(slide, image_data, 7.25, 1.15, 5.15, 4.65)
 
-        core_question = _safe_text(meta.get("core_question", "")).strip()
-        story_arc = _safe_text(meta.get("story_arc", "")).strip()
-        add_title_context_panel(slide, core_question, story_arc, 0.78, 3.92, 5.95, 2.48)
+            core_question = _safe_text(meta.get("core_question", "")).strip()
+            story_arc = _safe_text(meta.get("story_arc", "")).strip()
+            add_title_context_panel(slide, core_question, story_arc, 0.78, 3.92, 5.95, 2.48)
     else:
         add_textbox(slide, title, 0.75, 1.10, 11.8, 1.25, 34, True, TITLE_BLUE)
         add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.65, 8.8, 1.15, 18, False, GRAY_TEXT)
@@ -340,22 +352,28 @@ def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: D
     image_data = visual_image_bytes(slide_data)
 
     if image_data:
-        # When a visual is uploaded, let it occupy about half of the slide.
-        text_x = 0.75
-        text_w = 5.55
-        image_x = 6.65
-        image_w = 5.95
-        top_y = 1.22
-        content_h = 5.45
-
-        if discussion:
-            add_body_lines(slide, body_lines, text_x, top_y, text_w, 3.85, 20)
-            add_textbox(slide, "Discussion prompt", text_x, 5.18, text_w, 0.28, 13, True, TITLE_BLUE)
-            add_textbox(slide, discussion, text_x, 5.50, text_w, 0.92, 12, False, BODY_TEXT, fill=PALE_BLUE)
+        if visual_uses_full_slide(slide_data):
+            # Full visual mode keeps the standard title bar but gives the image
+            # essentially the entire slide body. Text and discussion remain in
+            # the mentor document and speaker notes, not on this slide.
+            add_image_fit(slide, image_data, 0.55, 0.95, 12.25, 6.10)
         else:
-            add_body_lines(slide, body_lines, text_x, top_y, text_w, content_h, 21)
+            # Default visual mode: image takes about half of the slide.
+            text_x = 0.75
+            text_w = 5.55
+            image_x = 6.65
+            image_w = 5.95
+            top_y = 1.22
+            content_h = 5.45
 
-        add_image_fit(slide, image_data, image_x, top_y, image_w, content_h)
+            if discussion:
+                add_body_lines(slide, body_lines, text_x, top_y, text_w, 3.85, 20)
+                add_textbox(slide, "Discussion prompt", text_x, 5.18, text_w, 0.28, 13, True, TITLE_BLUE)
+                add_textbox(slide, discussion, text_x, 5.50, text_w, 0.92, 12, False, BODY_TEXT, fill=PALE_BLUE)
+            else:
+                add_body_lines(slide, body_lines, text_x, top_y, text_w, content_h, 21)
+
+            add_image_fit(slide, image_data, image_x, top_y, image_w, content_h)
     else:
         if discussion:
             add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 4.45, 22)

@@ -78,3 +78,6 @@ Update v3.8: title-slide Core question / Story arc panel now estimates wrapped t
 
 
 Update v3.9: fixed GitHub loading for larger draft.json files by falling back to GitHub download_url when the Contents API omits inline file content. This can happen after image uploads are stored in the draft.
+
+
+Update v4.0: added GitHub archive deletion controls and an optional whole-slide visual layout for uploaded images.

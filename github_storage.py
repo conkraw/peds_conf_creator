@@ -124,6 +124,59 @@ def save_archive_to_github(deck: Dict[str, Any], pptx_bytes: bytes, mentor_docx_
     return results
 
 
+
+
+def _github_delete_file(path: str, sha: str, message: str) -> None:
+    cfg = _read_github_config()
+    payload = {"message": message, "sha": sha, "branch": cfg["branch"]}
+    response = requests.delete(_api_url(path), headers=_headers(cfg["token"]), json=payload, timeout=45)
+    if response.status_code not in (200, 202):
+        raise GitHubStorageError(f"GitHub delete failed for {path} ({response.status_code}): {response.text}")
+
+
+def _list_files_recursive(path: str) -> List[Dict[str, str]]:
+    data = _github_get_contents(path.strip().strip("/"))
+    if isinstance(data, dict):
+        if data.get("type") == "file":
+            return [{"path": str(data.get("path", path)), "sha": str(data.get("sha", ""))}]
+        return []
+    if not isinstance(data, list):
+        return []
+
+    files: List[Dict[str, str]] = []
+    for item in data:
+        item_type = item.get("type")
+        item_path = str(item.get("path", ""))
+        if item_type == "file":
+            files.append({"path": item_path, "sha": str(item.get("sha", ""))})
+        elif item_type == "dir":
+            files.extend(_list_files_recursive(item_path))
+    return files
+
+
+def delete_archive_from_github(archive_path: str) -> int:
+    """Delete all files inside one saved presentation archive folder."""
+    if not github_is_configured():
+        raise GitHubStorageError(github_status_message())
+
+    clean_path = archive_path.strip().strip("/")
+    if not clean_path:
+        raise GitHubStorageError("No GitHub archive path was selected for deletion.")
+
+    cfg = _read_github_config()
+    base_path = cfg["base_path"].strip().strip("/")
+    if clean_path == base_path or not clean_path.startswith(base_path + "/"):
+        raise GitHubStorageError(f"Refusing to delete outside the configured archive folder: {clean_path}")
+
+    files = [file for file in _list_files_recursive(clean_path) if file.get("path") and file.get("sha")]
+    if not files:
+        raise GitHubStorageError(f"No files were found to delete in {clean_path}.")
+
+    for file in files:
+        _github_delete_file(file["path"], file["sha"], f"Delete presentation archive file {file['path']}")
+    return len(files)
+
+
 def _github_get_contents(path: str) -> Any:
     cfg = _read_github_config()
     if not github_is_configured():

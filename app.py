@@ -46,6 +46,7 @@ from github_storage import (
     list_archives_from_github,
     load_json_from_github,
     save_archive_to_github,
+    delete_archive_from_github,
 )
 from pptx_builder import build_pptx
 
@@ -296,19 +297,59 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
 
         results = st.session_state.get("archive_results", [])
         if results:
-            label_to_path = {row["name"]: row["path"] for row in results}
-            selected_archive = st.selectbox("Saved presentations", list(label_to_path.keys()))
+            # Keep labels readable but unique, so duplicate presentation names do not overwrite each other.
+            label_counts: Dict[str, int] = {}
+            labels: List[str] = []
+            for row in results:
+                base_label = row.get("name", row.get("path", "Saved presentation"))
+                label_counts[base_label] = label_counts.get(base_label, 0) + 1
+                if label_counts[base_label] == 1:
+                    labels.append(base_label)
+                else:
+                    labels.append(f"{base_label} [{row.get('path', '')}]")
+
+            selected_archive = st.selectbox("Saved presentations", labels)
+            selected_index = labels.index(selected_archive)
+            selected_row = results[selected_index]
+            selected_path = selected_row["path"]
+
             if st.button("Load selected", use_container_width=True):
                 try:
-                    payload = load_json_from_github(label_to_path[selected_archive])
+                    payload = load_json_from_github(selected_path)
                     st.session_state.deck = normalize_loaded_deck(payload)
-                    st.session_state.archive_path = payload.get("archive_path", label_to_path[selected_archive])
+                    st.session_state.archive_path = payload.get("archive_path", selected_path)
                     queue_slide_selection(st.session_state.deck["slides"][0]["id"])
                     clear_widget_state()
                     st.success("Loaded from GitHub.")
                     st.rerun()
                 except GitHubStorageError as exc:
                     st.error(str(exc))
+
+            with st.expander("Delete selected archive"):
+                st.caption("Deletes the saved draft.json, presentation.pptx, mentor_review.docx, and any other files in that archive folder.")
+                confirm_delete = st.checkbox(
+                    "I understand this permanently deletes the selected GitHub archive",
+                    key="widget__confirm_delete_archive",
+                )
+                delete_phrase = st.text_input(
+                    "Type DELETE to confirm",
+                    key="widget__delete_archive_phrase",
+                    placeholder="DELETE",
+                )
+                if st.button(
+                    "Delete selected from GitHub",
+                    use_container_width=True,
+                    disabled=not (confirm_delete and delete_phrase.strip().upper() == "DELETE"),
+                ):
+                    try:
+                        deleted_count = delete_archive_from_github(selected_path)
+                        st.session_state.archive_results = [row for row in results if row.get("path") != selected_path]
+                        if st.session_state.get("archive_path", "").strip().strip("/") == selected_path.strip().strip("/"):
+                            st.session_state.archive_path = ""
+                        st.success(f"Deleted {deleted_count} file(s) from GitHub.")
+                        st.rerun()
+                    except GitHubStorageError as exc:
+                        st.error(str(exc))
 
         st.divider()
         if st.button("Start blank presentation", use_container_width=True):
@@ -419,7 +460,7 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
     """Store one optional image per slide and send it to PowerPoint/GitHub."""
-    st.caption("Optional: upload a PNG/JPEG visual. When used, it will take up about half of the exported PowerPoint slide.")
+    st.caption("Optional: upload a PNG/JPEG visual. By default it takes half of the PowerPoint slide; check the box after upload to use the whole slide body.")
     nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
     nonce = nonce_map.get(slide["id"], 0)
     uploaded = st.file_uploader(
@@ -443,10 +484,19 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
     image_info = get_visual_image(slide)
     if image_bytes:
         st.image(image_bytes, caption=image_info.get("filename", "Uploaded visual"), use_container_width=True)
+        slide["visual_full_slide"] = st.checkbox(
+            "Use this visual as a whole-slide PowerPoint visual",
+            value=bool(slide.get("visual_full_slide", False)),
+            key=f"widget__{slide['id']}__visual_full_slide",
+            help="When checked, the uploaded image uses the full slide body instead of the half-slide visual layout.",
+        )
         if st.button("Remove uploaded visual", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
             slide["visual_image"] = {}
+            slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
             st.rerun()
+    else:
+        slide["visual_full_slide"] = False
 
 
 def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:

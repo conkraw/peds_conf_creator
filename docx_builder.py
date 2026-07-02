@@ -359,6 +359,8 @@ def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str
     _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
     _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
     _add_image_row(table, slide)
+    if slide.get("visual_image") and slide.get("visual_full_slide"):
+        _add_field_row(table, "Visual layout", "Whole-slide PowerPoint visual")
     _add_field_row(table, "Discussion prompt", _safe_text(slide.get("discussion_prompt")))
     _add_field_row(table, "Speaker notes", _safe_text(slide.get("speaker_notes")))
     _add_field_row(table, "Mentor notes", "[Add comments here or use Word comments in the margin.]", PINK)
