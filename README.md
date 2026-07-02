@@ -75,3 +75,6 @@ Update v3.7: added optional title-slide visual upload; when used, the PowerPoint
 
 
 Update v3.8: title-slide Core question / Story arc panel now estimates wrapped text height, expands the pale-blue box, and reduces font size when needed so the box encircles the words instead of clipping or overflowing.
+
+
+Update v3.9: fixed GitHub loading for larger draft.json files by falling back to GitHub download_url when the Contents API omits inline file content. This can happen after image uploads are stored in the draft.

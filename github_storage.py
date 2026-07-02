@@ -136,6 +136,37 @@ def _github_get_contents(path: str) -> Any:
     return response.json()
 
 
+def _github_file_bytes_from_contents_response(data: Dict[str, Any], path: str = "") -> bytes:
+    """Return file bytes from a GitHub Contents API file response.
+
+    GitHub omits the inline `content` field for larger files returned by the
+    Contents API. That can happen when draft.json contains uploaded images
+    encoded as base64. In that case, fall back to the file's download_url using
+    the same token.
+    """
+    cfg = _read_github_config()
+
+    encoded = str(data.get("content", "") or "").replace("\n", "")
+    if encoded:
+        try:
+            return base64.b64decode(encoded)
+        except Exception as exc:
+            raise GitHubStorageError(f"GitHub file content could not be decoded: {exc}") from exc
+
+    download_url = str(data.get("download_url", "") or "").strip()
+    if download_url:
+        response = requests.get(download_url, headers=_headers(cfg["token"]), timeout=45)
+        if response.status_code == 200 and response.content:
+            return response.content
+        raise GitHubStorageError(
+            f"GitHub file content was not returned inline, and download failed "
+            f"({response.status_code}): {response.text}"
+        )
+
+    message_path = f" for {path}" if path else ""
+    raise GitHubStorageError(f"GitHub file did not contain downloadable content{message_path}.")
+
+
 def _search_normalize(value: Any) -> str:
     """Normalize labels/paths so searches match underscores, hyphens, and spaces."""
     import re
@@ -157,13 +188,11 @@ def _matches_search(search_text: str, *values: Any) -> bool:
 def _draft_metadata_for_archive(path: str) -> Dict[str, Any]:
     """Read lightweight metadata from an archive's draft.json when available."""
     try:
-        data = _github_get_contents(f"{path.strip().rstrip('/')}/{ARCHIVE_JSON_NAME}")
+        draft_path = f"{path.strip().rstrip('/')}/{ARCHIVE_JSON_NAME}"
+        data = _github_get_contents(draft_path)
         if not isinstance(data, dict):
             return {}
-        encoded = str(data.get("content", "")).replace("\n", "")
-        if not encoded:
-            return {}
-        decoded = base64.b64decode(encoded).decode("utf-8")
+        decoded = _github_file_bytes_from_contents_response(data, draft_path).decode("utf-8")
         payload = json.loads(decoded)
         deck = payload.get("deck", payload) if isinstance(payload, dict) else {}
         meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
@@ -234,11 +263,10 @@ def load_json_from_github(path: str) -> Dict[str, Any]:
     data = _github_get_contents(clean)
     if not isinstance(data, dict):
         raise GitHubStorageError("Selected GitHub path did not return a JSON file.")
-    encoded = str(data.get("content", "")).replace("\n", "")
-    if not encoded:
-        raise GitHubStorageError("GitHub JSON file did not contain content.")
     try:
-        decoded = base64.b64decode(encoded).decode("utf-8")
+        decoded = _github_file_bytes_from_contents_response(data, clean).decode("utf-8")
         return json.loads(decoded)
+    except GitHubStorageError:
+        raise
     except Exception as exc:
         raise GitHubStorageError(f"GitHub draft is not valid JSON: {exc}") from exc
