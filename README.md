@@ -72,3 +72,6 @@ Update v3.6: archive search now normalizes spaces/underscores/hyphens and search
 
 
 Update v3.7: added optional title-slide visual upload; when used, the PowerPoint title slide shows text on the left and the uploaded image on the right.
+
+
+Update v3.8: title-slide Core question / Story arc panel now estimates wrapped text height, expands the pale-blue box, and reduces font size when needed so the box encircles the words instead of clipping or overflowing.

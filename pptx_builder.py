@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import math
 import re
 import zipfile
 import xml.etree.ElementTree as ET
@@ -147,6 +148,89 @@ def add_section_panel(slide, x: float, y: float, w: float, h: float):
     return panel
 
 
+def estimate_textbox_height(
+    text: Any,
+    width_inches: float,
+    font_size: int,
+    min_height: float = 0.28,
+    max_height: float = 2.2,
+) -> float:
+    """Conservative text-height estimate so background boxes grow with text.
+
+    PowerPoint text boxes do not reliably auto-resize when created through
+    python-pptx. This estimate prevents the pale-blue title-slide context box
+    from being shorter than the Core question / Story arc text.
+    """
+    clean = _safe_text(text).strip()
+    if not clean:
+        return 0.0
+
+    chars_per_line = max(18, int(width_inches * (95 / max(font_size, 1))))
+    wrapped_lines = 0
+    for paragraph in clean.splitlines():
+        paragraph = paragraph.strip()
+        wrapped_lines += max(1, math.ceil(len(paragraph) / chars_per_line)) if paragraph else 1
+
+    line_height = font_size * 0.020
+    estimated = 0.13 + wrapped_lines * line_height
+    return max(min_height, min(max_height, estimated))
+
+
+def add_title_context_panel(
+    slide,
+    core_question: str,
+    story_arc: str,
+    x: float,
+    y: float,
+    w: float,
+    max_h: float,
+) -> None:
+    """Add a Core question / Story arc panel that resizes around its text."""
+    core_question = _safe_text(core_question).strip()
+    story_arc = _safe_text(story_arc).strip()
+    if not core_question and not story_arc:
+        return
+
+    content_w = w - 0.60
+    core_font = 14
+    story_font = 12
+    heading_h = 0.24
+    gap_after_heading = 0.09
+    gap_between_sections = 0.16
+    pad_top = 0.18
+    pad_bottom = 0.18
+
+    while True:
+        core_h = estimate_textbox_height(core_question, content_w, core_font, min_height=0.34, max_height=1.40) if core_question else 0
+        story_h = estimate_textbox_height(story_arc, content_w, story_font, min_height=0.34, max_height=1.65) if story_arc else 0
+        needed = pad_top + pad_bottom
+        if core_question:
+            needed += heading_h + gap_after_heading + core_h
+        if story_arc:
+            needed += (gap_between_sections if core_question else 0) + heading_h + gap_after_heading + story_h
+        if needed <= max_h or (core_font <= 11 and story_font <= 9):
+            break
+        core_font -= 1
+        story_font -= 1
+
+    panel_h = min(max_h, max(1.05, needed))
+    add_section_panel(slide, x, y, w, panel_h)
+
+    cursor = y + pad_top
+    text_x = x + 0.25
+    if core_question:
+        add_textbox(slide, "Core question", text_x, cursor, content_w, heading_h, 12, True, TITLE_BLUE)
+        cursor += heading_h + gap_after_heading
+        add_textbox(slide, core_question, text_x, cursor, content_w, core_h, core_font, False, BODY_TEXT, margin=0.04)
+        cursor += core_h
+    if story_arc:
+        if core_question:
+            cursor += gap_between_sections
+        add_textbox(slide, "Story arc", text_x, cursor, content_w, heading_h, 12, True, TITLE_BLUE)
+        cursor += heading_h + gap_after_heading
+        add_textbox(slide, story_arc, text_x, cursor, content_w, story_h, story_font, False, BODY_TEXT, margin=0.04)
+
+
 def get_visual_image(slide_data: Dict[str, Any]) -> Dict[str, str]:
     image = slide_data.get("visual_image", {})
     return image if isinstance(image, dict) else {}
@@ -221,28 +305,14 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
 
         core_question = _safe_text(meta.get("core_question", "")).strip()
         story_arc = _safe_text(meta.get("story_arc", "")).strip()
-        if core_question or story_arc:
-            add_section_panel(slide, 0.78, 4.10, 5.95, 1.82)
-            if core_question:
-                add_textbox(slide, "Core question", 1.00, 4.24, 2.2, 0.25, 12, True, TITLE_BLUE)
-                add_textbox(slide, core_question, 1.00, 4.52, 5.35, 0.42, 15, False, BODY_TEXT)
-            if story_arc:
-                add_textbox(slide, "Story arc", 1.00, 5.02, 2.2, 0.25, 12, True, TITLE_BLUE)
-                add_textbox(slide, story_arc, 1.00, 5.28, 5.35, 0.42, 13, False, BODY_TEXT)
+        add_title_context_panel(slide, core_question, story_arc, 0.78, 3.92, 5.95, 2.48)
     else:
         add_textbox(slide, title, 0.75, 1.10, 11.8, 1.25, 34, True, TITLE_BLUE)
         add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.65, 8.8, 1.15, 18, False, GRAY_TEXT)
 
         core_question = _safe_text(meta.get("core_question", "")).strip()
         story_arc = _safe_text(meta.get("story_arc", "")).strip()
-        if core_question or story_arc:
-            add_section_panel(slide, 0.80, 4.25, 11.75, 1.55)
-            if core_question:
-                add_textbox(slide, "Core question", 1.05, 4.42, 2.5, 0.28, 13, True, TITLE_BLUE)
-                add_textbox(slide, core_question, 1.05, 4.73, 10.9, 0.36, 17, False, BODY_TEXT)
-            if story_arc:
-                add_textbox(slide, "Story arc", 1.05, 5.16, 2.5, 0.28, 13, True, TITLE_BLUE)
-                add_textbox(slide, story_arc, 1.05, 5.46, 10.9, 0.32, 14, False, BODY_TEXT)
+        add_title_context_panel(slide, core_question, story_arc, 0.80, 4.05, 11.75, 2.25)
 
 
 def render_objectives_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
