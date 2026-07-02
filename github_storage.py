@@ -136,22 +136,95 @@ def _github_get_contents(path: str) -> Any:
     return response.json()
 
 
+def _search_normalize(value: Any) -> str:
+    """Normalize labels/paths so searches match underscores, hyphens, and spaces."""
+    import re
+
+    text = str(value or "").lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _matches_search(search_text: str, *values: Any) -> bool:
+    """Return True when every search token appears somewhere in the archive metadata."""
+    tokens = _search_normalize(search_text).split()
+    if not tokens:
+        return True
+    haystack = _search_normalize(" ".join(str(value or "") for value in values))
+    return all(token in haystack for token in tokens)
+
+
+def _draft_metadata_for_archive(path: str) -> Dict[str, Any]:
+    """Read lightweight metadata from an archive's draft.json when available."""
+    try:
+        data = _github_get_contents(f"{path.strip().rstrip('/')}/{ARCHIVE_JSON_NAME}")
+        if not isinstance(data, dict):
+            return {}
+        encoded = str(data.get("content", "")).replace("\n", "")
+        if not encoded:
+            return {}
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        payload = json.loads(decoded)
+        deck = payload.get("deck", payload) if isinstance(payload, dict) else {}
+        meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
+        if not isinstance(meta, dict):
+            meta = {}
+        return {
+            "presentation_title": str(meta.get("presentation_title", "")),
+            "presenter": str(meta.get("presenter", "")),
+            "session_date": str(meta.get("session_date", "")),
+            "audience": str(meta.get("audience", "")),
+            "presentation_type": str(meta.get("presentation_type", "")),
+            "saved_at": str(payload.get("saved_at", "")) if isinstance(payload, dict) else "",
+        }
+    except Exception:
+        return {}
+
+
+def _archive_display_name(folder_name: str, metadata: Dict[str, Any]) -> str:
+    """Build a readable archive label while keeping the folder name as fallback."""
+    date = str(metadata.get("session_date", "")).strip()
+    presenter = str(metadata.get("presenter", "")).strip()
+    title = str(metadata.get("presentation_title", "")).strip()
+    parts = [part for part in [date, presenter, title] if part]
+    return " · ".join(parts) if parts else folder_name
+
+
 def list_archives_from_github(search_text: str = "") -> List[Dict[str, str]]:
     cfg = _read_github_config()
     rows = _github_get_contents(cfg["base_path"])
     if not isinstance(rows, list):
         return []
-    needle = search_text.strip().lower()
+
     archives: List[Dict[str, str]] = []
     for item in rows:
         if item.get("type") != "dir":
             continue
-        name = str(item.get("name", ""))
+        folder_name = str(item.get("name", ""))
         path = str(item.get("path", ""))
-        if needle and needle not in name.lower() and needle not in path.lower():
+        metadata = _draft_metadata_for_archive(path)
+
+        if not _matches_search(
+            search_text,
+            folder_name,
+            path,
+            metadata.get("presentation_title", ""),
+            metadata.get("presenter", ""),
+            metadata.get("session_date", ""),
+            metadata.get("audience", ""),
+            metadata.get("presentation_type", ""),
+        ):
             continue
-        archives.append({"name": name, "path": path, "html_url": item.get("html_url", "")})
-    return sorted(archives, key=lambda row: row["name"], reverse=True)
+
+        archives.append(
+            {
+                "name": _archive_display_name(folder_name, metadata),
+                "path": path,
+                "html_url": item.get("html_url", ""),
+                "sort_key": metadata.get("saved_at") or metadata.get("session_date") or folder_name,
+            }
+        )
+    return sorted(archives, key=lambda row: row.get("sort_key", row["name"]), reverse=True)
 
 
 def load_json_from_github(path: str) -> Dict[str, Any]:

@@ -66,3 +66,6 @@ Update v3.4: mentor review uploaded visuals are centered, constrained to fit wit
 
 
 Update v3.5: fixed Streamlit sidebar slide-selection state so Add after/Add at end/Duplicate/Delete no longer mutate the radio widget state after it renders.
+
+
+Update v3.6: archive search now normalizes spaces/underscores/hyphens and searches draft metadata, so searching for names like "Conrad Krawiec" finds folders such as `Conrad_Krawiec`.
