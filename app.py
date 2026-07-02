@@ -605,10 +605,20 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
         )
 
     with st.container(border=True):
-        st.success("Saved to GitHub archive.")
-        saved_file_names = [result.path.rsplit("/", 1)[-1] for result in results if result.html_url]
-        if saved_file_names:
-            st.caption("Saved files: " + ", ".join(saved_file_names))
+        st.markdown("#### GitHub archive")
+        st.caption("Saves draft.json, presentation.pptx, and mentor_review.docx to GitHub.")
+        if st.button("Save all to GitHub", use_container_width=True):
+            try:
+                results = save_archive_to_github(deck, pptx_bytes, mentor_docx_bytes, st.session_state.get("archive_path", ""))
+                if results:
+                    # Path looks like base/date_presenter_title/file.ext; archive folder is the parent.
+                    st.session_state.archive_path = results[0].path.rsplit("/", 1)[0]
+                st.success("Saved to GitHub archive.")
+                saved_file_names = [result.path.rsplit("/", 1)[-1] for result in results if result.html_url]
+                if saved_file_names:
+                    st.caption("Saved files: " + ", ".join(saved_file_names))
+            except GitHubStorageError as exc:
+                st.error(str(exc))
 
 
 # -----------------------------------------------------------------------------

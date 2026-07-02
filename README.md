@@ -81,3 +81,6 @@ Update v3.9: fixed GitHub loading for larger draft.json files by falling back to
 
 
 Update v4.0: added GitHub archive deletion controls and an optional whole-slide visual layout for uploaded images.
+
+
+Update v4.1: GitHub save confirmation now displays only saved file names instead of full archive paths.
