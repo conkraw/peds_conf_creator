@@ -69,3 +69,6 @@ Update v3.5: fixed Streamlit sidebar slide-selection state so Add after/Add at e
 
 
 Update v3.6: archive search now normalizes spaces/underscores/hyphens and searches draft metadata, so searching for names like "Conrad Krawiec" finds folders such as `Conrad_Krawiec`.
+
+
+Update v3.7: added optional title-slide visual upload; when used, the PowerPoint title slide shows text on the left and the uploaded image on the right.

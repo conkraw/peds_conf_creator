@@ -374,6 +374,9 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     )
     meta["archive_notes"] = st.text_area("Internal archive notes", meta.get("archive_notes", ""), height=70)
 
+    st.markdown("#### Optional title-slide visual")
+    render_visual_upload(slide)
+
     slide["title"] = meta.get("presentation_title", "")
     slide["speaker_notes"] = widget_text(slide, "speaker_notes", "Speaker notes for title slide", height=90, multiline=True)
 

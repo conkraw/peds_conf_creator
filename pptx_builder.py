@@ -210,20 +210,39 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
     date = meta.get("session_date") or "Date not entered"
     audience = meta.get("audience") or "Audience not entered"
     talk_type = meta.get("presentation_type") or "Presentation type not entered"
+    image_data = visual_image_bytes(slide_data)
 
-    add_textbox(slide, title, 0.75, 1.10, 11.8, 1.25, 34, True, TITLE_BLUE)
-    add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.65, 8.8, 1.15, 18, False, GRAY_TEXT)
+    if image_data:
+        # Split title slide: text on the left, optional visual on the right.
+        add_textbox(slide, title, 0.70, 0.92, 6.0, 1.25, 30, True, TITLE_BLUE)
+        add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.78, 2.30, 4.8, 1.35, 17, False, GRAY_TEXT)
+        add_section_panel(slide, 7.05, 0.95, 5.55, 5.05)
+        add_image_fit(slide, image_data, 7.25, 1.15, 5.15, 4.65)
 
-    core_question = _safe_text(meta.get("core_question", "")).strip()
-    story_arc = _safe_text(meta.get("story_arc", "")).strip()
-    if core_question or story_arc:
-        add_section_panel(slide, 0.80, 4.25, 11.75, 1.55)
-        if core_question:
-            add_textbox(slide, "Core question", 1.05, 4.42, 2.5, 0.28, 13, True, TITLE_BLUE)
-            add_textbox(slide, core_question, 1.05, 4.73, 10.9, 0.36, 17, False, BODY_TEXT)
-        if story_arc:
-            add_textbox(slide, "Story arc", 1.05, 5.16, 2.5, 0.28, 13, True, TITLE_BLUE)
-            add_textbox(slide, story_arc, 1.05, 5.46, 10.9, 0.32, 14, False, BODY_TEXT)
+        core_question = _safe_text(meta.get("core_question", "")).strip()
+        story_arc = _safe_text(meta.get("story_arc", "")).strip()
+        if core_question or story_arc:
+            add_section_panel(slide, 0.78, 4.10, 5.95, 1.82)
+            if core_question:
+                add_textbox(slide, "Core question", 1.00, 4.24, 2.2, 0.25, 12, True, TITLE_BLUE)
+                add_textbox(slide, core_question, 1.00, 4.52, 5.35, 0.42, 15, False, BODY_TEXT)
+            if story_arc:
+                add_textbox(slide, "Story arc", 1.00, 5.02, 2.2, 0.25, 12, True, TITLE_BLUE)
+                add_textbox(slide, story_arc, 1.00, 5.28, 5.35, 0.42, 13, False, BODY_TEXT)
+    else:
+        add_textbox(slide, title, 0.75, 1.10, 11.8, 1.25, 34, True, TITLE_BLUE)
+        add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.65, 8.8, 1.15, 18, False, GRAY_TEXT)
+
+        core_question = _safe_text(meta.get("core_question", "")).strip()
+        story_arc = _safe_text(meta.get("story_arc", "")).strip()
+        if core_question or story_arc:
+            add_section_panel(slide, 0.80, 4.25, 11.75, 1.55)
+            if core_question:
+                add_textbox(slide, "Core question", 1.05, 4.42, 2.5, 0.28, 13, True, TITLE_BLUE)
+                add_textbox(slide, core_question, 1.05, 4.73, 10.9, 0.36, 17, False, BODY_TEXT)
+            if story_arc:
+                add_textbox(slide, "Story arc", 1.05, 5.16, 2.5, 0.28, 13, True, TITLE_BLUE)
+                add_textbox(slide, story_arc, 1.05, 5.46, 10.9, 0.32, 14, False, BODY_TEXT)
 
 
 def render_objectives_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
