@@ -117,3 +117,6 @@ Update v5.2: PPTX uploads now import the first uploaded slide as editable PowerP
 
 
 Update v5.3: added a dedicated Take-home points slide editor with five structured points, a numbered-circle PowerPoint layout, optional bottom discussion prompt, and support for an optional right-side visual upload.
+
+
+Update v5.4: standard content slides now support an optional section box label. If entered, a blue header box appears above the main text block (for example, "Common resident questions"). If left blank, no box is shown.

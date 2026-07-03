@@ -765,6 +765,7 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         widget_text(slide, "title", "Slide title", help_text="Can be blank if you do not know the title yet.")
 
     widget_text(slide, "subtitle", "Optional subtitle", help_text="Use sparingly. The main title should tell the story.")
+    widget_text(slide, "section_box_label", "Optional section box label", help_text="If entered, the exported slide shows a blue section header box above the main text block (for example: Common resident questions). Leave blank for no box.")
     body = widget_text(slide, "body", "Slide text", height=190, multiline=True, help_text="Use one idea per line. Short lines work best on slides.")
     st.caption(f"{count_words(body)} words. For readability, try to keep most slides under ~45 words.")
 

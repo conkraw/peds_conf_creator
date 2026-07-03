@@ -620,16 +620,13 @@ def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: D
 
     body_lines = split_nonempty_lines(slide_data.get("body", ""))
     discussion = _safe_text(slide_data.get("discussion_prompt", "")).strip()
+    section_box_label = _safe_text(slide_data.get("section_box_label", "")).strip()
     image_data = visual_image_bytes(slide_data)
 
     if image_data:
         if visual_uses_full_slide(slide_data):
-            # Full visual mode keeps the standard title bar but gives the image
-            # essentially the entire slide body. Text and discussion remain in
-            # the mentor document and speaker notes, not on this slide.
             add_image_fit(slide, image_data, 0.55, 0.95, 12.25, 6.10)
         else:
-            # Default visual mode: image takes about half of the slide.
             text_x = 0.75
             text_w = 5.55
             image_x = 6.65
@@ -637,21 +634,67 @@ def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: D
             top_y = 1.22
             content_h = 5.45
 
+            if section_box_label:
+                label_w = min(4.6, max(2.6, 0.12 * len(section_box_label) + 1.2))
+                label = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(text_x), Inches(top_y), Inches(label_w), Inches(0.38))
+                label.fill.solid()
+                label.fill.fore_color.rgb = _rgb(TITLE_BLUE)
+                label.line.color.rgb = _rgb(TITLE_BLUE)
+                ltf = label.text_frame
+                ltf.clear()
+                ltf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                lp = ltf.paragraphs[0]
+                lp.alignment = PP_ALIGN.CENTER
+                lr = lp.add_run()
+                lr.text = section_box_label
+                lr.font.name = "Aptos"
+                lr.font.size = Pt(14)
+                lr.font.bold = True
+                lr.font.color.rgb = _rgb(WHITE)
+                text_y = top_y + 0.58
+                text_h = 3.25 if discussion else 4.75
+            else:
+                text_y = top_y
+                text_h = 3.85 if discussion else content_h
+
             if discussion:
-                add_body_lines(slide, body_lines, text_x, top_y, text_w, 3.85, 20)
+                add_body_lines(slide, body_lines, text_x, text_y, text_w, text_h, 20)
                 add_textbox(slide, "Discussion prompt", text_x, 5.18, text_w, 0.28, 13, True, TITLE_BLUE)
                 add_textbox(slide, discussion, text_x, 5.50, text_w, 0.92, 12, False, BODY_TEXT, fill=PALE_BLUE)
             else:
-                add_body_lines(slide, body_lines, text_x, top_y, text_w, content_h, 21)
+                add_body_lines(slide, body_lines, text_x, text_y, text_w, text_h, 21)
 
             add_image_fit(slide, image_data, image_x, top_y, image_w, content_h)
     else:
+        if section_box_label:
+            label_w = min(5.0, max(2.6, 0.11 * len(section_box_label) + 1.2))
+            label = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(0.85), Inches(1.22), Inches(label_w), Inches(0.38))
+            label.fill.solid()
+            label.fill.fore_color.rgb = _rgb(TITLE_BLUE)
+            label.line.color.rgb = _rgb(TITLE_BLUE)
+            ltf = label.text_frame
+            ltf.clear()
+            ltf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            lp = ltf.paragraphs[0]
+            lp.alignment = PP_ALIGN.CENTER
+            lr = lp.add_run()
+            lr.text = section_box_label
+            lr.font.name = "Aptos"
+            lr.font.size = Pt(14)
+            lr.font.bold = True
+            lr.font.color.rgb = _rgb(WHITE)
+            body_y = 1.76
+            body_h = 4.05 if discussion else 4.80
+        else:
+            body_y = 1.35
+            body_h = 4.45 if discussion else 5.25
+
         if discussion:
-            add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 4.45, 22)
+            add_body_lines(slide, body_lines, 0.85, body_y, 11.5, body_h, 22)
             add_textbox(slide, "Discussion prompt", 0.95, 5.95, 2.3, 0.28, 13, True, TITLE_BLUE)
             add_textbox(slide, discussion, 0.95, 6.24, 11.2, 0.50, 12, False, BODY_TEXT, fill=PALE_BLUE)
         else:
-            add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 5.25, 22)
+            add_body_lines(slide, body_lines, 0.85, body_y, 11.5, body_h, 22)
 
 
 def _rels_path_for(part_path: str) -> str:
