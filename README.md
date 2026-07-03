@@ -111,3 +111,6 @@ Update v5.0: PPTX uploads are now rendered to a full-slide PNG and inserted as a
 
 
 Update v5.1: PPTX uploads now render through a more reliable LibreOffice-to-PDF route, then PyMuPDF converts the first PDF page to PNG. This avoids PowerPoint XML splicing and is more reliable on Streamlit Cloud than direct PNG conversion.
+
+
+Update v5.2: PPTX uploads now import the first uploaded slide as editable PowerPoint objects instead of rasterizing to PNG. This preserves editability for text boxes, images, tables, and many charts. Complex animations/transitions and some SmartArt may not fully preserve.

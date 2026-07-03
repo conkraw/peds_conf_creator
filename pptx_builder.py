@@ -13,20 +13,12 @@ import math
 import re
 import zipfile
 import posixpath
-import subprocess
-import tempfile
-import shutil
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
-from pathlib import Path
-import os
+from copy import deepcopy
 
 from PIL import Image
 
-try:
-    import fitz  # PyMuPDF; used to render LibreOffice-generated PDFs
-except Exception:
-    fitz = None
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
@@ -269,95 +261,6 @@ def uploaded_slide_pptx_bytes(slide_data: Dict[str, Any]) -> bytes | None:
         return None
     try:
         return base64.b64decode(encoded)
-    except Exception:
-        return None
-
-
-def _office_binary() -> str | None:
-    """Return an available LibreOffice executable name/path."""
-    for candidate in ["libreoffice", "soffice", "/usr/bin/libreoffice", "/usr/bin/soffice"]:
-        found = shutil.which(candidate) if not candidate.startswith("/") else candidate
-        if found and Path(found).exists():
-            return found
-    return None
-
-
-def _run_libreoffice_convert(input_path: Path, outdir: Path, convert_to: str, timeout: int = 120) -> subprocess.CompletedProcess | None:
-    office = _office_binary()
-    if not office:
-        return None
-    env = dict(os.environ)
-    env["HOME"] = str(outdir)
-    env["UserInstallation"] = f"file://{outdir / 'lo-profile'}"
-    cmd = [
-        office,
-        "--headless",
-        "--nologo",
-        "--nodefault",
-        "--nofirststartwizard",
-        "--nolockcheck",
-        "--convert-to",
-        convert_to,
-        "--outdir",
-        str(outdir),
-        str(input_path),
-    ]
-    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=env)
-
-
-def _render_pdf_first_page_to_png(pdf_path: Path) -> bytes | None:
-    """Render the first page of a PDF to PNG using PyMuPDF."""
-    if fitz is None or not pdf_path.exists():
-        return None
-    try:
-        doc = fitz.open(str(pdf_path))
-        if doc.page_count < 1:
-            doc.close()
-            return None
-        page = doc.load_page(0)
-        # 2.0 gives a good balance of readability and file size.
-        matrix = fitz.Matrix(2.0, 2.0)
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
-        png = pix.tobytes("png")
-        doc.close()
-        return png
-    except Exception:
-        return None
-
-
-def render_pptx_first_slide_to_png(pptx_bytes: bytes) -> bytes | None:
-    """Render the first slide of an uploaded PPTX to PNG.
-
-    Primary route: LibreOffice PPTX -> PDF, then PyMuPDF PDF page 1 -> PNG.
-    This is usually more reliable on Streamlit Cloud than asking LibreOffice to
-    export PNG directly. A direct PNG conversion remains as a fallback.
-    """
-    if not pptx_bytes:
-        return None
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            input_path = tmp / "uploaded_slide.pptx"
-            input_path.write_bytes(pptx_bytes)
-
-            # Preferred path: PPTX -> PDF -> PNG
-            pdf_result = _run_libreoffice_convert(input_path, tmp, "pdf")
-            if pdf_result is not None and pdf_result.returncode == 0:
-                pdf_candidates = sorted(tmp.glob("*.pdf"))
-                if pdf_candidates:
-                    rendered = _render_pdf_first_page_to_png(pdf_candidates[0])
-                    if rendered:
-                        return rendered
-
-            # Fallback: PPTX -> PNG directly, which works in some local/LO builds.
-            png_result = _run_libreoffice_convert(input_path, tmp, "png")
-            if png_result is not None and png_result.returncode == 0:
-                png_candidates = sorted(tmp.glob("*.png"))
-                if png_candidates:
-                    return png_candidates[0].read_bytes()
-
-            return None
     except Exception:
         return None
 
@@ -824,28 +727,135 @@ def _source_first_slide_part(src_files: Dict[str, bytes]) -> str:
     return "ppt/slides/slide1.xml"
 
 
-def render_uploaded_pptx_replacement_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
-    """Render an uploaded PPTX's first slide as a full-slide image.
+def _relationship_should_copy(reltype: str) -> bool:
+    skip_suffixes = (
+        "/slideLayout",
+        "/notesSlide",
+        "/comments",
+        "/commentAuthors",
+    )
+    return not reltype.endswith(skip_suffixes)
 
-    The key design choice is intentional: imported PPTX slides are rasterized to
-    a PNG and inserted as a normal image. This is far more reliable than XML
-    splicing and prevents desktop PowerPoint repair/read errors.
-    """
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    pptx_bytes = uploaded_slide_pptx_bytes(slide_data)
-    image_bytes = render_pptx_first_slide_to_png(pptx_bytes or b"")
-    if image_bytes:
-        add_image_fit(slide, image_bytes, 0.0, 0.0, 13.333, 7.50)
+
+def _remap_rids_in_element(element, rid_map: Dict[str, str]) -> None:
+    if not rid_map:
+        return
+    for node in element.iter():
+        for attr, value in list(node.attrib.items()):
+            if value in rid_map:
+                node.attrib[attr] = rid_map[value]
+
+
+def _scale_element_transform(element, scale_x: float, scale_y: float) -> None:
+    if abs(scale_x - 1.0) < 0.0001 and abs(scale_y - 1.0) < 0.0001:
+        return
+    for xfrm in element.iter(f"{{{A_NS}}}xfrm"):
+        for child in xfrm:
+            if child.tag == f"{{{A_NS}}}off":
+                if "x" in child.attrib:
+                    child.attrib["x"] = str(int(round(int(child.attrib["x"]) * scale_x)))
+                if "y" in child.attrib:
+                    child.attrib["y"] = str(int(round(int(child.attrib["y"]) * scale_y)))
+            elif child.tag == f"{{{A_NS}}}ext":
+                if "cx" in child.attrib:
+                    child.attrib["cx"] = str(int(round(int(child.attrib["cx"]) * scale_x)))
+                if "cy" in child.attrib:
+                    child.attrib["cy"] = str(int(round(int(child.attrib["cy"]) * scale_y)))
+            elif child.tag == f"{{{A_NS}}}chOff":
+                if "x" in child.attrib:
+                    child.attrib["x"] = str(int(round(int(child.attrib["x"]) * scale_x)))
+                if "y" in child.attrib:
+                    child.attrib["y"] = str(int(round(int(child.attrib["y"]) * scale_y)))
+            elif child.tag == f"{{{A_NS}}}chExt":
+                if "cx" in child.attrib:
+                    child.attrib["cx"] = str(int(round(int(child.attrib["cx"]) * scale_x)))
+                if "cy" in child.attrib:
+                    child.attrib["cy"] = str(int(round(int(child.attrib["cy"]) * scale_y)))
+
+
+def _copy_slide_background(source_slide, dest_slide, rid_map: Dict[str, str]) -> None:
+    try:
+        src_c_sld = source_slide.element.find(f"{{{P_NS}}}cSld")
+        dst_c_sld = dest_slide.element.find(f"{{{P_NS}}}cSld")
+        if src_c_sld is None or dst_c_sld is None:
+            return
+        src_bg = src_c_sld.find(f"{{{P_NS}}}bg")
+        if src_bg is None:
+            return
+        dst_bg = dst_c_sld.find(f"{{{P_NS}}}bg")
+        bg_copy = deepcopy(src_bg)
+        _remap_rids_in_element(bg_copy, rid_map)
+        if dst_bg is not None:
+            dst_c_sld.remove(dst_bg)
+        sp_tree = dst_c_sld.find(f"{{{P_NS}}}spTree")
+        if sp_tree is not None:
+            dst_c_sld.insert(list(dst_c_sld).index(sp_tree), bg_copy)
+        else:
+            dst_c_sld.insert(0, bg_copy)
+    except Exception:
         return
 
+
+def _copy_first_pptx_slide_as_editable_shapes(prs: Presentation, pptx_bytes: bytes):
+    """Copy the first slide of an uploaded PPTX as editable shapes.
+
+    It keeps text boxes, images, tables, and many charts editable. Advanced
+    features such as transitions, animations, and some SmartArt may not fully
+    preserve.
+    """
+    source_prs = Presentation(io.BytesIO(pptx_bytes))
+    if len(source_prs.slides) < 1:
+        raise ValueError("Uploaded PPTX has no slides")
+    source_slide = source_prs.slides[0]
+    dest_slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    scale_x = float(prs.slide_width) / float(source_prs.slide_width) if source_prs.slide_width else 1.0
+    scale_y = float(prs.slide_height) / float(source_prs.slide_height) if source_prs.slide_height else 1.0
+
+    rid_map: Dict[str, str] = {}
+    for old_rid, rel in source_slide.part.rels.items():
+        reltype = rel.reltype
+        if not _relationship_should_copy(reltype):
+            continue
+        try:
+            target = rel.target_ref if rel.is_external else rel._target
+            new_rid = dest_slide.part.relate_to(target, reltype, rel.is_external)
+            rid_map[old_rid] = new_rid
+        except Exception:
+            continue
+
+    _copy_slide_background(source_slide, dest_slide, rid_map)
+
+    for shape in source_slide.shapes:
+        try:
+            element = deepcopy(shape.element)
+            _remap_rids_in_element(element, rid_map)
+            _scale_element_transform(element, scale_x, scale_y)
+            dest_slide.shapes._spTree.insert_element_before(element, "p:extLst")
+        except Exception:
+            continue
+    return dest_slide
+
+
+def render_uploaded_pptx_replacement_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
+    """Import an uploaded PPTX's first slide as editable PowerPoint shapes."""
+    pptx_bytes = uploaded_slide_pptx_bytes(slide_data)
+    if pptx_bytes:
+        try:
+            _copy_first_pptx_slide_as_editable_shapes(prs, pptx_bytes)
+            return
+        except Exception:
+            pass
+
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_title_bar(slide, slide_output_title(deck, slide_data, index))
     info = get_uploaded_slide_pptx(slide_data)
     filename = info.get("filename", "uploaded slide.pptx")
     add_section_panel(slide, 0.85, 1.50, 11.65, 3.75)
-    add_textbox(slide, "PPTX slide could not be rendered", 1.15, 1.85, 11.0, 0.45, 24, True, TITLE_BLUE)
+    add_textbox(slide, "PPTX slide could not be imported", 1.15, 1.85, 11.0, 0.45, 24, True, TITLE_BLUE)
     add_textbox(
         slide,
-        f"The uploaded PPTX was stored, but the app could not render its first slide as an image.\n\nFile: {filename}\n\nOn Streamlit Cloud, make sure packages.txt includes libreoffice. You can also export the slide as PNG and upload that image.",
+        f"The uploaded PPTX was stored, but the app could not import its first slide as editable PowerPoint objects.\n\nFile: {filename}\n\nTry saving the source slide as a simpler PPTX, or upload a PNG/JPEG if editability is not required.",
         1.15,
         2.45,
         10.95,
