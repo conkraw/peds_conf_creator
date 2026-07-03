@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.03-v5.4"
+APP_VERSION = "2026.07.03-v5.5"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -318,13 +318,22 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
                 slide_kind=raw.get("slide_kind") or "content",
             )
             slide["id"] = str(raw.get("id") or slide["id"])
-            for key in ["subtitle", "body", "visual_plan", "discussion_prompt", "objectives_intro", "objective_1_verb", "objective_1_text", "objective_2_verb", "objective_2_text", "objective_3_verb", "objective_3_text", "objectives_takeaway", "speaker_notes"]:
-                slide[key] = raw.get(key, "")
-            visual_image = raw.get("visual_image", {})
+
+            # Copy every field that belongs to the current slide schema. This
+            # prevents newly added fields (such as section_box_label or the
+            # structured take-home fields) from disappearing when an existing
+            # presentation is loaded from GitHub.
+            protected_keys = {"id", "role", "title", "prompt", "required", "slide_kind"}
+            for key in list(slide.keys()):
+                if key in protected_keys or key not in raw:
+                    continue
+                slide[key] = copy.deepcopy(raw[key])
+
+            visual_image = slide.get("visual_image", {})
             slide["visual_image"] = visual_image if isinstance(visual_image, dict) else {}
-            uploaded_slide_pptx = raw.get("uploaded_slide_pptx", {})
+            uploaded_slide_pptx = slide.get("uploaded_slide_pptx", {})
             slide["uploaded_slide_pptx"] = uploaded_slide_pptx if isinstance(uploaded_slide_pptx, dict) else {}
-            slide["visual_full_slide"] = bool(raw.get("visual_full_slide", False))
+            slide["visual_full_slide"] = bool(slide.get("visual_full_slide", False))
             normalized_slides.append(slide)
         if normalized_slides:
             base["slides"] = normalized_slides

@@ -387,6 +387,8 @@ def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str
     _add_field_row(table, "Role", role)
     _add_field_row(table, "Title", _safe_text(slide.get("title")))
     _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
+    if _safe_text(slide.get("section_box_label")):
+        _add_field_row(table, "Section box label", _safe_text(slide.get("section_box_label")))
     _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
     _add_image_row(table, slide)
     if slide.get("visual_image") and slide.get("visual_full_slide"):

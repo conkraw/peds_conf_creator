@@ -120,3 +120,6 @@ Update v5.3: added a dedicated Take-home points slide editor with five structure
 
 
 Update v5.4: standard content slides now support an optional section box label. If entered, a blue header box appears above the main text block (for example, "Common resident questions"). If left blank, no box is shown.
+
+
+Update v5.5: fixed GitHub-loaded presentations so the optional section box label and all other newer slide fields survive normalization. Added an on-screen confirmation when the section box is active and included the label in the mentor DOCX.
