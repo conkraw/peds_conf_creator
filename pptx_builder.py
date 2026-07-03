@@ -408,35 +408,59 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
 
 def render_objectives_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title_bar(slide, slide_output_title(deck, slide_data, index))
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
 
     image_data = visual_image_bytes(slide_data)
     if image_data and visual_uses_full_slide(slide_data):
-        add_image_fit(slide, image_data, 0.55, 0.95, 12.25, 6.10)
+        add_textbox(slide, slide_output_title(deck, slide_data, index), 0.30, 0.18, 4.2, 0.48, 24, True, TITLE_BLUE)
+        add_image_fit(slide, image_data, 0.35, 0.80, 12.60, 6.30)
         return
 
+    title = slide_output_title(deck, slide_data, index)
     intro = _safe_text(slide_data.get("objectives_intro", "")).strip() or "By the end of this session, residents should be able to:"
     takeaway = _safe_text(slide_data.get("objectives_takeaway", "")).strip()
-    add_textbox(slide, intro, 0.32, 0.82, 12.2, 0.34, 13, False, GRAY_TEXT)
 
-    divider = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(0.30), Inches(1.18), Inches(12.45), Inches(0.02))
+    # More visual custom layout to match the reference style.
+    add_textbox(slide, title, 0.30, 0.16, 5.8, 0.50, 24, True, TITLE_BLUE)
+    add_textbox(slide, intro, 0.30, 0.70, 12.3, 0.24, 12, False, GRAY_TEXT)
+
+    divider = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(0.30), Inches(1.03), Inches(12.45), Inches(0.015))
     divider.fill.solid()
     divider.fill.fore_color.rgb = _rgb(BORDER_BLUE)
     divider.line.color.rgb = _rgb(BORDER_BLUE)
 
     cards = objective_cards_from_slide(slide_data)
-    fills = [LIGHT_BLUE, (225, 236, 218), (242, 230, 189)]
-    x_positions = [0.50, 4.95, 9.40]
-    y = 2.08
-    w = 3.85
-    h = 2.55
-    for idx_card, (x, card) in enumerate(zip(x_positions, cards), start=1):
+    while len(cards) < 3:
+        cards.append((f"Objective {len(cards)+1}", "Add objective text here."))
+
+    fills = [(235, 241, 247), (228, 238, 223), (243, 232, 193)]
+    x_positions = [0.54, 4.95, 9.36]
+    y = 2.05
+    w = 3.80
+    h = 2.60
+    for idx_card, (x, card) in enumerate(zip(x_positions, cards[:3]), start=1):
         verb, sentence = card
         add_objective_card(slide, idx_card, verb, sentence, x, y, w, h, fills[(idx_card - 1) % len(fills)])
 
     if takeaway:
-        add_section_panel(slide, 0.90, 5.72, 11.80, 0.85)
-        add_textbox(slide, takeaway, 1.05, 5.94, 11.5, 0.38, 17, True, (25, 35, 52), align=PP_ALIGN.CENTER)
+        panel = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE, Inches(0.92), Inches(5.77), Inches(11.70), Inches(0.78))
+        panel.fill.solid()
+        panel.fill.fore_color.rgb = _rgb(WHITE)
+        panel.line.color.rgb = _rgb(BORDER_BLUE)
+        panel.line.width = Pt(1.0)
+        tf = panel.text_frame
+        tf.clear()
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = takeaway
+        run.font.name = "Aptos"
+        run.font.size = Pt(17)
+        run.font.bold = True
+        run.font.color.rgb = _rgb((25, 35, 52))
 
 
 def render_disclosures_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:

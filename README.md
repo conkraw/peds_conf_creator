@@ -90,3 +90,6 @@ Update v4.2: moved the sidebar Add slides controls into a collapsed dropdown/exp
 
 
 Update v4.4: fixed startup robustness by computing Bloom objective dropdown options in app.py, kept GitHub archive collapsed in a dropdown, and preserved the visual objectives slide layout.
+
+
+Update v4.5: refined the exported Objectives slide to match the visual reference more closely with a clean title on white background, intro line, divider, three numbered objective cards, and a bottom banner.
