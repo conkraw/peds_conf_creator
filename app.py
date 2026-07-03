@@ -28,7 +28,6 @@ from deck_model import (
     ARCHIVE_PPTX_NAME,
     BLOOM_HELPER,
     OBJECTIVE_EXAMPLES,
-    OBJECTIVE_VERB_OPTIONS,
     SLIDE_ROLES,
     TALK_TYPES,
     default_deck,
@@ -50,6 +49,23 @@ from github_storage import (
     delete_archive_from_github,
 )
 from pptx_builder import build_pptx
+
+
+def objective_verb_options() -> List[str]:
+    """Build Bloom verb options locally so app.py still works if deck_model is stale."""
+    verbs: List[str] = []
+    for raw_verbs in BLOOM_HELPER.values():
+        for raw_verb in str(raw_verbs).split(","):
+            verb = raw_verb.strip().title()
+            if verb and verb not in verbs:
+                verbs.append(verb)
+    for preferred in ["Formulate", "Appraise", "Apply"]:
+        if preferred not in verbs:
+            verbs.append(preferred)
+    return verbs
+
+
+OBJECTIVE_VERB_OPTIONS = objective_verb_options()
 
 
 # -----------------------------------------------------------------------------

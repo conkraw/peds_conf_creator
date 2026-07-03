@@ -87,3 +87,6 @@ Update v4.1: GitHub save confirmation now displays only saved file names instead
 
 
 Update v4.2: moved the sidebar Add slides controls into a collapsed dropdown/expander so they stay out of the way until needed.
+
+
+Update v4.4: fixed startup robustness by computing Bloom objective dropdown options in app.py, kept GitHub archive collapsed in a dropdown, and preserved the visual objectives slide layout.
