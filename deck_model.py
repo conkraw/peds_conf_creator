@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.06.30-v4.2"
+APP_VERSION = "2026.06.30-v4.3"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -54,6 +54,16 @@ OBJECTIVE_EXAMPLES = [
     "Apply the take-home points to a realistic patient, learner, or research decision.",
 ]
 
+OBJECTIVE_VERB_OPTIONS = [
+    verb.title()
+    for verb in dict.fromkeys(
+        verb.strip()
+        for verbs in BLOOM_HELPER.values()
+        for verb in verbs.split(",")
+        if verb.strip()
+    )
+]
+
 DEFAULT_DISCLOSURE = "I have no relevant financial or non-financial disclosures."
 
 
@@ -84,6 +94,14 @@ def new_slide(
         "visual_image": {},
         "visual_full_slide": False,
         "discussion_prompt": "",
+        "objectives_intro": "",
+        "objective_1_verb": "",
+        "objective_1_text": "",
+        "objective_2_verb": "",
+        "objective_2_text": "",
+        "objective_3_verb": "",
+        "objective_3_text": "",
+        "objectives_takeaway": "",
         "speaker_notes": "",
         "slide_kind": slide_kind,
         "required": required,
@@ -98,7 +116,15 @@ def title_slide() -> Dict[str, Any]:
 
 def objectives_slide() -> Dict[str, Any]:
     slide = new_slide("Objectives", "Objectives", "Use measurable Bloom-style verbs. Avoid vague verbs like understand or learn.", True, "objectives")
-    slide["body"] = "Describe the clinical or scholarly problem and why it matters.\nAppraise the key evidence, logic, or data supporting the main message.\nApply the take-home points to a realistic clinical, educational, or research decision."
+    slide["objectives_intro"] = "By the end of this session, residents should be able to:"
+    slide["objective_1_verb"] = "Formulate"
+    slide["objective_1_text"] = "Turn a bedside uncertainty into a focused clinical question."
+    slide["objective_2_verb"] = "Appraise"
+    slide["objective_2_text"] = "Judge whether the evidence is valid, important, and clinically applicable."
+    slide["objective_3_verb"] = "Apply"
+    slide["objective_3_text"] = "Use evidence with patient values, feasibility, and clinical judgment to make a decision."
+    slide["objectives_takeaway"] = "Leave with a simple script you can use tomorrow on rounds or in journal club."
+    slide["body"] = "Formulate: Turn a bedside uncertainty into a focused clinical question.\nAppraise: Judge whether the evidence is valid, important, and clinically applicable.\nApply: Use evidence with patient values, feasibility, and clinical judgment to make a decision."
     return slide
 
 
@@ -265,7 +291,7 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
                 slide_kind=raw.get("slide_kind") or "content",
             )
             slide["id"] = str(raw.get("id") or slide["id"])
-            for key in ["subtitle", "body", "visual_plan", "discussion_prompt", "speaker_notes"]:
+            for key in ["subtitle", "body", "visual_plan", "discussion_prompt", "objectives_intro", "objective_1_verb", "objective_1_text", "objective_2_verb", "objective_2_text", "objective_3_verb", "objective_3_text", "objectives_takeaway", "speaker_notes"]:
                 slide[key] = raw.get(key, "")
             visual_image = raw.get("visual_image", {})
             slide["visual_image"] = visual_image if isinstance(visual_image, dict) else {}

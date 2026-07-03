@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Tuple
 from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.util import Inches, Pt
 
@@ -282,6 +283,84 @@ def add_image_fit(slide, image_data: bytes, x: float, y: float, w: float, h: flo
     )
 
 
+def objective_cards_from_slide(slide_data: Dict[str, Any]) -> List[Tuple[str, str]]:
+    cards: List[Tuple[str, str]] = []
+    defaults = ["Formulate", "Appraise", "Apply"]
+    for idx in range(1, 4):
+        verb = _safe_text(slide_data.get(f"objective_{idx}_verb", "")).strip()
+        text = _safe_text(slide_data.get(f"objective_{idx}_text", "")).strip()
+        if verb or text:
+            cards.append((verb or defaults[idx - 1], text))
+    if cards:
+        return cards[:3]
+
+    lines = split_nonempty_lines(slide_data.get("body", "")) or OBJECTIVE_EXAMPLES[:3]
+    derived: List[Tuple[str, str]] = []
+    fallback_verbs = ["Formulate", "Appraise", "Apply"]
+    for idx, line in enumerate(lines[:3], start=1):
+        line = _safe_text(line).strip()
+        if ":" in line:
+            maybe_verb, maybe_text = line.split(":", 1)
+            maybe_verb = maybe_verb.strip().title()
+            maybe_text = maybe_text.strip()
+            if maybe_text:
+                derived.append((maybe_verb or fallback_verbs[idx - 1], maybe_text))
+                continue
+        derived.append((fallback_verbs[idx - 1], line))
+    return derived
+
+
+def estimate_objective_font_size(text: str) -> int:
+    words = len(re.findall(r"\b\w+\b", text or ""))
+    chars = len((text or "").strip())
+    if words > 18 or chars > 110:
+        return 17
+    if words > 13 or chars > 80:
+        return 19
+    return 21
+
+
+def add_objective_card(slide, idx: int, verb: str, text: str, x: float, y: float, w: float, h: float, fill: Tuple[int, int, int]) -> None:
+    circle = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x), Inches(y - 0.58), Inches(0.60), Inches(0.60))
+    circle.fill.solid()
+    circle.fill.fore_color.rgb = _rgb(TITLE_BLUE)
+    circle.line.color.rgb = _rgb(TITLE_BLUE)
+    ctf = circle.text_frame
+    ctf.clear()
+    cp = ctf.paragraphs[0]
+    cp.alignment = PP_ALIGN.CENTER
+    cr = cp.add_run()
+    cr.text = str(idx)
+    cr.font.name = "Aptos"
+    cr.font.size = Pt(18)
+    cr.font.bold = True
+    cr.font.color.rgb = _rgb(WHITE)
+
+    add_textbox(slide, verb or f"Objective {idx}", x + 0.72, y - 0.55, w - 0.2, 0.45, 20, True, TITLE_BLUE)
+
+    panel = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE, Inches(x), Inches(y + 0.15), Inches(w), Inches(h))
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = _rgb(fill)
+    panel.line.color.rgb = _rgb(BORDER_BLUE)
+    panel.line.width = Pt(1.0)
+
+    tf = panel.text_frame
+    tf.clear()
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = Inches(0.18)
+    tf.margin_right = Inches(0.18)
+    tf.margin_top = Inches(0.10)
+    tf.margin_bottom = Inches(0.10)
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    run = p.add_run()
+    run.text = text or "Add objective text here."
+    run.font.name = "Aptos"
+    run.font.size = Pt(estimate_objective_font_size(text))
+    run.font.color.rgb = _rgb((28, 37, 55))
+
+
 # -----------------------------------------------------------------------------
 # Slide renderers
 # -----------------------------------------------------------------------------
@@ -330,8 +409,34 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
 def render_objectives_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_title_bar(slide, slide_output_title(deck, slide_data, index))
-    objectives = split_nonempty_lines(slide_data.get("body", "")) or OBJECTIVE_EXAMPLES[:3]
-    add_body_lines(slide, objectives, 0.85, 1.35, 11.5, 4.9, 24)
+
+    image_data = visual_image_bytes(slide_data)
+    if image_data and visual_uses_full_slide(slide_data):
+        add_image_fit(slide, image_data, 0.55, 0.95, 12.25, 6.10)
+        return
+
+    intro = _safe_text(slide_data.get("objectives_intro", "")).strip() or "By the end of this session, residents should be able to:"
+    takeaway = _safe_text(slide_data.get("objectives_takeaway", "")).strip()
+    add_textbox(slide, intro, 0.32, 0.82, 12.2, 0.34, 13, False, GRAY_TEXT)
+
+    divider = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(0.30), Inches(1.18), Inches(12.45), Inches(0.02))
+    divider.fill.solid()
+    divider.fill.fore_color.rgb = _rgb(BORDER_BLUE)
+    divider.line.color.rgb = _rgb(BORDER_BLUE)
+
+    cards = objective_cards_from_slide(slide_data)
+    fills = [LIGHT_BLUE, (225, 236, 218), (242, 230, 189)]
+    x_positions = [0.50, 4.95, 9.40]
+    y = 2.08
+    w = 3.85
+    h = 2.55
+    for idx_card, (x, card) in enumerate(zip(x_positions, cards), start=1):
+        verb, sentence = card
+        add_objective_card(slide, idx_card, verb, sentence, x, y, w, h, fills[(idx_card - 1) % len(fills)])
+
+    if takeaway:
+        add_section_panel(slide, 0.90, 5.72, 11.80, 0.85)
+        add_textbox(slide, takeaway, 1.05, 5.94, 11.5, 0.38, 17, True, (25, 35, 52), align=PP_ALIGN.CENTER)
 
 
 def render_disclosures_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:

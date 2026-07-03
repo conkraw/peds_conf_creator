@@ -28,6 +28,7 @@ from deck_model import (
     ARCHIVE_PPTX_NAME,
     BLOOM_HELPER,
     OBJECTIVE_EXAMPLES,
+    OBJECTIVE_VERB_OPTIONS,
     SLIDE_ROLES,
     TALK_TYPES,
     default_deck,
@@ -223,6 +224,47 @@ def render_bloom_helper() -> None:
             st.write(f"• {example}")
 
 
+def ensure_objective_fields(slide: Dict[str, Any]) -> None:
+    """Backfill structured objective fields for newer objective-slide layouts."""
+    lines = split_nonempty_lines(slide.get("body", ""))
+    defaults = [
+        ("Formulate", "Turn a bedside uncertainty into a focused clinical question."),
+        ("Appraise", "Judge whether the evidence is valid, important, and clinically applicable."),
+        ("Apply", "Use evidence with patient values, feasibility, and clinical judgment to make a decision."),
+    ]
+    if not slide.get("objectives_intro"):
+        slide["objectives_intro"] = "By the end of this session, residents should be able to:"
+    if not slide.get("objectives_takeaway"):
+        slide["objectives_takeaway"] = "Leave with a simple script you can use tomorrow on rounds or in journal club."
+
+    for idx in range(1, 4):
+        verb_key = f"objective_{idx}_verb"
+        text_key = f"objective_{idx}_text"
+        if not slide.get(verb_key):
+            slide[verb_key] = defaults[idx - 1][0]
+        if not slide.get(text_key):
+            line = lines[idx - 1] if idx - 1 < len(lines) else defaults[idx - 1][1]
+            if ":" in line:
+                maybe_verb, maybe_text = line.split(":", 1)
+                maybe_verb = maybe_verb.strip().title()
+                maybe_text = maybe_text.strip()
+                if maybe_verb in OBJECTIVE_VERB_OPTIONS and maybe_text:
+                    slide[verb_key] = maybe_verb
+                    line = maybe_text
+            slide[text_key] = line
+
+
+def sync_objectives_body(slide: Dict[str, Any]) -> None:
+    ensure_objective_fields(slide)
+    summary_lines = []
+    for idx in range(1, 4):
+        verb = str(slide.get(f"objective_{idx}_verb", "")).strip()
+        text = str(slide.get(f"objective_{idx}_text", "")).strip()
+        if verb or text:
+            summary_lines.append(f"{verb}: {text}".strip(": "))
+    slide["body"] = "\n".join(summary_lines)
+
+
 # -----------------------------------------------------------------------------
 # Sidebar
 # -----------------------------------------------------------------------------
@@ -280,76 +322,77 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                     st.rerun()
 
         st.divider()
-        st.subheader("GitHub archive")
-        if github_is_configured():
-            st.success(github_status_message())
-        else:
-            st.info(github_status_message())
+        with st.expander("GitHub archive", expanded=False):
+            if github_is_configured():
+                st.success(github_status_message())
+            else:
+                st.info(github_status_message())
 
-        search_text = st.text_input("Search archive", placeholder="presenter, title, or date")
-        if st.button("Find saved presentations", use_container_width=True):
-            try:
-                st.session_state.archive_results = list_archives_from_github(search_text)
-                if not st.session_state.archive_results:
-                    st.info("No matching saved presentations found.")
-            except GitHubStorageError as exc:
-                st.error(str(exc))
-
-        results = st.session_state.get("archive_results", [])
-        if results:
-            # Keep labels readable but unique, so duplicate presentation names do not overwrite each other.
-            label_counts: Dict[str, int] = {}
-            labels: List[str] = []
-            for row in results:
-                base_label = row.get("name", row.get("path", "Saved presentation"))
-                label_counts[base_label] = label_counts.get(base_label, 0) + 1
-                if label_counts[base_label] == 1:
-                    labels.append(base_label)
-                else:
-                    labels.append(f"{base_label} [{row.get('path', '')}]")
-
-            selected_archive = st.selectbox("Saved presentations", labels)
-            selected_index = labels.index(selected_archive)
-            selected_row = results[selected_index]
-            selected_path = selected_row["path"]
-
-            if st.button("Load selected", use_container_width=True):
+            search_text = st.text_input("Search archive", placeholder="presenter, title, or date")
+            if st.button("Find saved presentations", use_container_width=True):
                 try:
-                    payload = load_json_from_github(selected_path)
-                    st.session_state.deck = normalize_loaded_deck(payload)
-                    st.session_state.archive_path = payload.get("archive_path", selected_path)
-                    queue_slide_selection(st.session_state.deck["slides"][0]["id"])
-                    clear_widget_state()
-                    st.success("Loaded from GitHub.")
-                    st.rerun()
+                    st.session_state.archive_results = list_archives_from_github(search_text)
+                    if not st.session_state.archive_results:
+                        st.info("No matching saved presentations found.")
                 except GitHubStorageError as exc:
                     st.error(str(exc))
 
-            with st.expander("Delete selected archive"):
-                st.caption("Deletes the saved draft.json, presentation.pptx, mentor_review.docx, and any other files in that archive folder.")
-                confirm_delete = st.checkbox(
-                    "I understand this permanently deletes the selected GitHub archive",
-                    key="widget__confirm_delete_archive",
-                )
-                delete_phrase = st.text_input(
-                    "Type DELETE to confirm",
-                    key="widget__delete_archive_phrase",
-                    placeholder="DELETE",
-                )
-                if st.button(
-                    "Delete selected from GitHub",
-                    use_container_width=True,
-                    disabled=not (confirm_delete and delete_phrase.strip().upper() == "DELETE"),
-                ):
+            results = st.session_state.get("archive_results", [])
+            if results:
+                # Keep labels readable but unique, so duplicate presentation names do not overwrite each other.
+                label_counts: Dict[str, int] = {}
+                labels: List[str] = []
+                for row in results:
+                    base_label = row.get("name", row.get("path", "Saved presentation"))
+                    label_counts[base_label] = label_counts.get(base_label, 0) + 1
+                    if label_counts[base_label] == 1:
+                        labels.append(base_label)
+                    else:
+                        labels.append(f"{base_label} [{row.get('path', '')}]")
+
+                selected_archive = st.selectbox("Saved presentations", labels)
+                selected_index = labels.index(selected_archive)
+                selected_row = results[selected_index]
+                selected_path = selected_row["path"]
+
+                if st.button("Load selected", use_container_width=True):
                     try:
-                        deleted_count = delete_archive_from_github(selected_path)
-                        st.session_state.archive_results = [row for row in results if row.get("path") != selected_path]
-                        if st.session_state.get("archive_path", "").strip().strip("/") == selected_path.strip().strip("/"):
-                            st.session_state.archive_path = ""
-                        st.success(f"Deleted {deleted_count} file(s) from GitHub.")
+                        payload = load_json_from_github(selected_path)
+                        st.session_state.deck = normalize_loaded_deck(payload)
+                        st.session_state.archive_path = payload.get("archive_path", selected_path)
+                        queue_slide_selection(st.session_state.deck["slides"][0]["id"])
+                        clear_widget_state()
+                        st.success("Loaded from GitHub.")
                         st.rerun()
                     except GitHubStorageError as exc:
                         st.error(str(exc))
+
+                st.divider()
+                with st.expander("Delete selected archive"):
+                    st.caption("Deletes the saved draft.json, presentation.pptx, mentor_review.docx, and any other files in that archive folder.")
+                    confirm_delete = st.checkbox(
+                        "I understand this permanently deletes the selected GitHub archive",
+                        key="widget__confirm_delete_archive",
+                    )
+                    delete_phrase = st.text_input(
+                        "Type DELETE to confirm",
+                        key="widget__delete_archive_phrase",
+                        placeholder="DELETE",
+                    )
+                    if st.button(
+                        "Delete selected from GitHub",
+                        use_container_width=True,
+                        disabled=not (confirm_delete and delete_phrase.strip().upper() == "DELETE"),
+                    ):
+                        try:
+                            deleted_count = delete_archive_from_github(selected_path)
+                            st.session_state.archive_results = [row for row in results if row.get("path") != selected_path]
+                            if st.session_state.get("archive_path", "").strip().strip("/") == selected_path.strip().strip("/"):
+                                st.session_state.archive_path = ""
+                            st.success(f"Deleted {deleted_count} file(s) from GitHub.")
+                            st.rerun()
+                        except GitHubStorageError as exc:
+                            st.error(str(exc))
 
         st.divider()
         if st.button("Start blank presentation", use_container_width=True):
@@ -424,12 +467,53 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_objectives_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Objectives")
+    ensure_objective_fields(slide)
     render_bloom_helper()
-    st.caption("Use measurable verbs. Example: describe, differentiate, appraise, apply, create.")
+    st.caption("Choose a Bloom-style action word for each objective, then enter the explanatory sentence.")
     widget_text(slide, "title", "Slide title", help_text="Usually 'Objectives'.")
-    body = widget_text(slide, "body", "Objectives", height=150, multiline=True, help_text="One objective per line.")
-    lines = split_nonempty_lines(body)
-    st.caption(f"{len(lines)} objective(s). Aim for 2–4.")
+    slide["objectives_intro"] = st.text_input(
+        "Intro line above objectives",
+        value=slide.get("objectives_intro", "By the end of this session, residents should be able to:"),
+        key=f"widget__{slide['id']}__objectives_intro",
+    )
+
+    card_cols = st.columns(3)
+    for idx, col in enumerate(card_cols, start=1):
+        with col:
+            st.markdown(f"**Objective {idx}**")
+            verb_key = f"objective_{idx}_verb"
+            text_key = f"objective_{idx}_text"
+            current_verb = slide.get(verb_key, "") or "Apply"
+            options = OBJECTIVE_VERB_OPTIONS
+            default_index = options.index(current_verb) if current_verb in options else min(len(options) - 1, max(0, options.index("Apply") if "Apply" in options else 0))
+            slide[verb_key] = st.selectbox(
+                f"Objective {idx} action word",
+                options,
+                index=default_index,
+                key=f"widget__{slide['id']}__{verb_key}",
+            )
+            slide[text_key] = st.text_area(
+                f"Objective {idx} sentence",
+                value=slide.get(text_key, ""),
+                height=120,
+                key=f"widget__{slide['id']}__{text_key}",
+                placeholder="Write the teaching objective sentence here.",
+            )
+
+    slide["objectives_takeaway"] = st.text_input(
+        "Bottom takeaway banner",
+        value=slide.get("objectives_takeaway", ""),
+        key=f"widget__{slide['id']}__objectives_takeaway",
+        placeholder="Optional summary banner at the bottom of the slide.",
+    )
+
+    sync_objectives_body(slide)
+    objective_count = sum(1 for idx in range(1, 4) if str(slide.get(f"objective_{idx}_text", "")).strip())
+    st.caption(f"{objective_count} objective card(s) populated.")
+
+    st.markdown("#### Optional objective-slide visual")
+    st.caption("If you upload a visual and check whole-slide mode, the visual can take over the objectives slide in the exported PowerPoint.")
+    render_visual_upload(slide)
     widget_text(slide, "speaker_notes", "Speaker notes", height=120, multiline=True)
 
 
