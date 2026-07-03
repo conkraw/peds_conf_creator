@@ -108,3 +108,6 @@ Update v4.9: added an optional presentation subtitle on the title slide and tigh
 
 
 Update v5.0: PPTX uploads are now rendered to a full-slide PNG and inserted as a normal image instead of splicing PowerPoint XML. This is designed to avoid PowerPoint repair/read errors. Added packages.txt with libreoffice for Streamlit Cloud conversion support.
+
+
+Update v5.1: PPTX uploads now render through a more reliable LibreOffice-to-PDF route, then PyMuPDF converts the first PDF page to PNG. This avoids PowerPoint XML splicing and is more reliable on Streamlit Cloud than direct PNG conversion.

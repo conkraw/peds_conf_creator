@@ -15,12 +15,18 @@ import zipfile
 import posixpath
 import subprocess
 import tempfile
+import shutil
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
 from pathlib import Path
 import os
 
 from PIL import Image
+
+try:
+    import fitz  # PyMuPDF; used to render LibreOffice-generated PDFs
+except Exception:
+    fitz = None
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
@@ -267,35 +273,91 @@ def uploaded_slide_pptx_bytes(slide_data: Dict[str, Any]) -> bytes | None:
         return None
 
 
-def render_pptx_first_slide_to_png(pptx_bytes: bytes) -> bytes | None:
-    """Render the first slide of an uploaded PPTX to PNG using LibreOffice.
+def _office_binary() -> str | None:
+    """Return an available LibreOffice executable name/path."""
+    for candidate in ["libreoffice", "soffice", "/usr/bin/libreoffice", "/usr/bin/soffice"]:
+        found = shutil.which(candidate) if not candidate.startswith("/") else candidate
+        if found and Path(found).exists():
+            return found
+    return None
 
-    This avoids directly splicing PowerPoint XML, which can trigger repair or
-    read errors in desktop PowerPoint. The rendered slide is then inserted as a
-    normal image into the exported deck.
+
+def _run_libreoffice_convert(input_path: Path, outdir: Path, convert_to: str, timeout: int = 120) -> subprocess.CompletedProcess | None:
+    office = _office_binary()
+    if not office:
+        return None
+    env = dict(os.environ)
+    env["HOME"] = str(outdir)
+    env["UserInstallation"] = f"file://{outdir / 'lo-profile'}"
+    cmd = [
+        office,
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--nofirststartwizard",
+        "--nolockcheck",
+        "--convert-to",
+        convert_to,
+        "--outdir",
+        str(outdir),
+        str(input_path),
+    ]
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=env)
+
+
+def _render_pdf_first_page_to_png(pdf_path: Path) -> bytes | None:
+    """Render the first page of a PDF to PNG using PyMuPDF."""
+    if fitz is None or not pdf_path.exists():
+        return None
+    try:
+        doc = fitz.open(str(pdf_path))
+        if doc.page_count < 1:
+            doc.close()
+            return None
+        page = doc.load_page(0)
+        # 2.0 gives a good balance of readability and file size.
+        matrix = fitz.Matrix(2.0, 2.0)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        png = pix.tobytes("png")
+        doc.close()
+        return png
+    except Exception:
+        return None
+
+
+def render_pptx_first_slide_to_png(pptx_bytes: bytes) -> bytes | None:
+    """Render the first slide of an uploaded PPTX to PNG.
+
+    Primary route: LibreOffice PPTX -> PDF, then PyMuPDF PDF page 1 -> PNG.
+    This is usually more reliable on Streamlit Cloud than asking LibreOffice to
+    export PNG directly. A direct PNG conversion remains as a fallback.
     """
     if not pptx_bytes:
         return None
+
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             input_path = tmp / "uploaded_slide.pptx"
             input_path.write_bytes(pptx_bytes)
-            env = dict(os.environ)
-            env["HOME"] = str(tmp)
-            result = subprocess.run(
-                ["libreoffice", "--headless", "--convert-to", "png", "--outdir", str(tmp), str(input_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=90,
-                env=env,
-            )
-            if result.returncode != 0:
-                return None
-            png_candidates = sorted(tmp.glob("*.png"))
-            if not png_candidates:
-                return None
-            return png_candidates[0].read_bytes()
+
+            # Preferred path: PPTX -> PDF -> PNG
+            pdf_result = _run_libreoffice_convert(input_path, tmp, "pdf")
+            if pdf_result is not None and pdf_result.returncode == 0:
+                pdf_candidates = sorted(tmp.glob("*.pdf"))
+                if pdf_candidates:
+                    rendered = _render_pdf_first_page_to_png(pdf_candidates[0])
+                    if rendered:
+                        return rendered
+
+            # Fallback: PPTX -> PNG directly, which works in some local/LO builds.
+            png_result = _run_libreoffice_convert(input_path, tmp, "png")
+            if png_result is not None and png_result.returncode == 0:
+                png_candidates = sorted(tmp.glob("*.png"))
+                if png_candidates:
+                    return png_candidates[0].read_bytes()
+
+            return None
     except Exception:
         return None
 
