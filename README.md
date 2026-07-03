@@ -126,3 +126,5 @@ Update v5.5: fixed GitHub-loaded presentations so the optional section box label
 
 
 Update v5.6: expanded the mentor review Word document to include every presentation-level planning field (including core question, story arc, archive notes, and audience/type) and every slide-specific field, including helper prompts, structured objectives, five take-home points, section box labels, visuals, discussion prompts, and speaker notes.
+
+Update v5.7: the mentor DOCX now has an unmistakable v5.7 generation marker, a complete presentation-plan/story-arc section, explicit structured objective and take-home fields, future-proof inclusion of additional metadata/slide fields, and an internal completeness check. The app disables the mentor download if the old/incomplete DOCX builder is still deployed, and downloads the file as mentor_review_v5_7.docx to avoid confusion with older downloads.

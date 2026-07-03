@@ -39,7 +39,7 @@ from deck_model import (
     short_label,
     split_nonempty_lines,
 )
-from docx_builder import build_mentor_review_docx
+from docx_builder import build_mentor_review_docx, mentor_docx_contains_complete_review_fields
 from github_storage import (
     GitHubStorageError,
     github_is_configured,
@@ -823,12 +823,19 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
         st.caption("Give this to the mentor for comments or Track Changes. Critiques are not stored in the app.")
+        complete_mentor_doc = mentor_docx_contains_complete_review_fields(mentor_docx_bytes)
+        if complete_mentor_doc:
+            st.success(f"Complete mentor template active ({APP_VERSION}): presentation plan, core question, story arc, objectives, take-home points, visuals, and speaker notes are included.")
+        else:
+            st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
+        mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")
         st.download_button(
             "Download mentor DOCX",
             data=mentor_docx_bytes,
-            file_name=ARCHIVE_DOCX_NAME,
+            file_name=f"mentor_review_{mentor_version}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True,
+            disabled=not complete_mentor_doc,
         )
 
     with st.container(border=True):
