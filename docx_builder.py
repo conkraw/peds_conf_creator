@@ -177,6 +177,15 @@ def _set_row_height(row, height_pt: float, exact: bool = False) -> None:
     tr_height.set(qn("w:hRule"), "exact" if exact else "atLeast")
 
 
+def _prevent_row_split(row) -> None:
+    """Keep a table row together on one page when Word paginates the DOCX."""
+    tr_pr = row._tr.get_or_add_trPr()
+    cant_split = tr_pr.find(qn("w:cantSplit"))
+    if cant_split is None:
+        cant_split = OxmlElement("w:cantSplit")
+        tr_pr.append(cant_split)
+
+
 def _clear_cell(cell) -> None:
     cell.text = ""
     if not cell.paragraphs:
@@ -234,6 +243,41 @@ def _add_title_block(doc: Document, deck: Dict[str, Any]) -> None:
     _write_cell_text(cell, f"{identity_title(deck)}\n{identity_subtitle(deck)}", font_size=10.5, bold=False, color=TEXT_DARK, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
+
+
+def _add_presentation_overview(doc: Document, deck: Dict[str, Any]) -> None:
+    """Add every presentation-level field from the app to the mentor document."""
+    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
+    width = _body_width_inches(doc)
+
+    _add_slide_banner(doc, "Presentation plan and story arc")
+    table = doc.add_table(rows=0, cols=2)
+    table.style = "Table Grid"
+    _lock_table_widths(table, [1.65, width - 1.65])
+
+    overview_rows = [
+        ("Presentation title", _safe_text(meta.get("presentation_title"))),
+        ("Presentation subtitle", _safe_text(meta.get("presentation_subtitle"))),
+        ("Presenter", _safe_text(meta.get("presenter"))),
+        ("Session date", _safe_text(meta.get("session_date"))),
+        ("Audience", _safe_text(meta.get("audience"))),
+        ("Presentation type", _safe_text(meta.get("presentation_type"))),
+        ("Core question / tension", _safe_text(meta.get("core_question"))),
+        ("Story arc", _safe_text(meta.get("story_arc"))),
+        ("Internal archive notes", _safe_text(meta.get("archive_notes"))),
+        ("App version", _safe_text(deck.get("app_version"))),
+        ("Total slides", str(len(deck.get("slides", [])))),
+    ]
+    for label, value in overview_rows:
+        _add_field_row(table, label, value)
+
+    _add_field_row(
+        table,
+        "Overall mentor review",
+        "[Comment on the overall story, alignment between title/objectives/content, sequencing, omissions, and major revisions.]",
+        PINK,
+    )
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
 
 def _add_guidelines(doc: Document) -> None:
@@ -299,6 +343,7 @@ def _add_slide_banner(doc: Document, text: str) -> None:
 
 def _add_field_row(table, label: str, value: str, label_fill: str = HEADER_GRAY) -> None:
     row = table.add_row()
+    _prevent_row_split(row)
     label_cell, value_cell = row.cells
     _shade_cell(label_cell, label_fill)
     _shade_cell(value_cell, WHITE)
@@ -338,7 +383,7 @@ def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) 
         _add_field_row(
             table,
             "Uploaded visual",
-            f"Editable PPTX slide replacement uploaded: {pptx_name}. The first slide is imported into the exported PowerPoint as editable objects.",
+            "Editable PPTX slide replacement uploaded. The first slide is imported into the exported PowerPoint as editable objects.",
             label_fill,
         )
         return
@@ -349,6 +394,7 @@ def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) 
         return
 
     row = table.add_row()
+    _prevent_row_split(row)
     label_cell, value_cell = row.cells
     _shade_cell(label_cell, label_fill)
     _shade_cell(value_cell, WHITE)
@@ -375,8 +421,11 @@ def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) 
 
 
 def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> None:
+    """Add a complete slide-by-slide record of every editable app field."""
     title = slide_output_title(deck, slide, index)
-    role = slide.get("role") or "Slide"
+    role = _safe_text(slide.get("role")) or "Slide"
+    kind = _safe_text(slide.get("slide_kind")) or "content"
+    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
     _add_slide_banner(doc, f"Slide {index}: {title}")
 
     width = _body_width_inches(doc)
@@ -384,15 +433,71 @@ def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str
     table.style = "Table Grid"
     _lock_table_widths(table, [1.65, width - 1.65])
 
+    # Fields shared by all slide types.
     _add_field_row(table, "Role", role)
-    _add_field_row(table, "Title", _safe_text(slide.get("title")))
+    _add_field_row(table, "Slide template / type", kind)
+    _add_field_row(table, "Required slide", "Yes" if bool(slide.get("required", False)) else "No")
+    _add_field_row(table, "Helper prompt", _safe_text(slide.get("prompt")))
+    _add_field_row(table, "PowerPoint output title", title)
+    _add_field_row(table, "Slide title", _safe_text(slide.get("title")))
     _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
-    if _safe_text(slide.get("section_box_label")):
-        _add_field_row(table, "Section box label", _safe_text(slide.get("section_box_label")))
-    _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
+    _add_field_row(table, "Section box label", _safe_text(slide.get("section_box_label")))
+
+    # The title slide is driven by presentation metadata rather than ordinary body fields.
+    if role == "Title" or kind == "title":
+        _add_field_row(table, "Presentation title", _safe_text(meta.get("presentation_title")))
+        _add_field_row(table, "Presentation subtitle", _safe_text(meta.get("presentation_subtitle")))
+        _add_field_row(table, "Presenter", _safe_text(meta.get("presenter")))
+        _add_field_row(table, "Session date", _safe_text(meta.get("session_date")))
+        _add_field_row(table, "Audience", _safe_text(meta.get("audience")))
+        _add_field_row(table, "Presentation type", _safe_text(meta.get("presentation_type")))
+        _add_field_row(table, "Core question / tension", _safe_text(meta.get("core_question")))
+        _add_field_row(table, "Story arc", _safe_text(meta.get("story_arc")))
+        _add_field_row(table, "Internal archive notes", _safe_text(meta.get("archive_notes")))
+
+    # Objectives use structured fields in the app; show each one explicitly.
+    elif role == "Objectives" or kind == "objectives":
+        _add_field_row(table, "Objectives intro", _safe_text(slide.get("objectives_intro")))
+        for objective_number in range(1, 4):
+            _add_field_row(
+                table,
+                f"Objective {objective_number} action word",
+                _safe_text(slide.get(f"objective_{objective_number}_verb")),
+            )
+            _add_field_row(
+                table,
+                f"Objective {objective_number} sentence",
+                _safe_text(slide.get(f"objective_{objective_number}_text")),
+            )
+        _add_field_row(table, "Bottom takeaway banner", _safe_text(slide.get("objectives_takeaway")))
+        _add_field_row(table, "Compiled slide text", _safe_text(slide.get("body")))
+
+    # Take-home slides also use five structured fields.
+    elif role == "Take-home" or kind == "takehome":
+        for point_number in range(1, 6):
+            _add_field_row(
+                table,
+                f"Take-home point {point_number}",
+                _safe_text(slide.get(f"takehome_point_{point_number}")),
+            )
+        _add_field_row(table, "Compiled slide text", _safe_text(slide.get("body")))
+
+    # Ordinary slides use the main body field.
+    else:
+        _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
+
+    # Keep any nonblank legacy visual-plan content so old saved presentations lose nothing.
+    if _safe_text(slide.get("visual_plan")):
+        _add_field_row(table, "Legacy visual / evidence plan", _safe_text(slide.get("visual_plan")))
+
     _add_image_row(table, slide)
-    if slide.get("visual_image") and slide.get("visual_full_slide"):
-        _add_field_row(table, "Visual layout", "Whole-slide PowerPoint visual")
+    if _uploaded_slide_pptx_bytes(slide):
+        visual_layout = "Editable PPTX slide replacement"
+    elif _visual_image_bytes(slide):
+        visual_layout = "Whole-slide visual" if bool(slide.get("visual_full_slide", False)) else "Image used within slide layout"
+    else:
+        visual_layout = "No uploaded visual"
+    _add_field_row(table, "Visual layout", visual_layout)
     _add_field_row(table, "Discussion prompt", _safe_text(slide.get("discussion_prompt")))
     _add_field_row(table, "Speaker notes", _safe_text(slide.get("speaker_notes")))
     _add_field_row(table, "Mentor notes", "[Add comments here or use Word comments in the margin.]", PINK)
@@ -438,10 +543,13 @@ def build_mentor_review_docx(deck: Dict[str, Any]) -> bytes:
     styles["Normal"].font.size = Pt(9.5)
 
     _add_title_block(doc, deck)
+    _add_presentation_overview(doc, deck)
     _add_guidelines(doc)
     _add_bloom_reference(doc)
 
     for idx, slide in enumerate(deck.get("slides", []), start=1):
+        if idx > 1:
+            doc.add_page_break()
         _add_slide_review_block(doc, deck, slide, idx)
 
     output = BytesIO()
@@ -452,13 +560,32 @@ def build_mentor_review_docx(deck: Dict[str, Any]) -> bytes:
 
 
 def build_plain_text_summary(deck: Dict[str, Any]) -> str:
-    """Optional helper used by tests and future integrations."""
+    """Complete text representation used by tests and future integrations."""
+    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
     parts = [identity_title(deck), identity_subtitle(deck), ""]
+    for key in [
+        "presentation_subtitle",
+        "core_question",
+        "story_arc",
+        "archive_notes",
+    ]:
+        value = _safe_text(meta.get(key))
+        if value:
+            parts.append(f"{key}: {value}")
+    parts.append("")
+
+    excluded = {"id", "visual_image", "uploaded_slide_pptx"}
     for idx, slide in enumerate(deck.get("slides", []), start=1):
         parts.append(f"Slide {idx}: {slide_output_title(deck, slide, idx)}")
-        for key in ["body", "discussion_prompt", "speaker_notes"]:
-            value = _safe_text(slide.get(key))
+        for key, raw_value in slide.items():
+            if key in excluded:
+                continue
+            value = _safe_text(raw_value)
             if value:
                 parts.append(f"{key}: {value}")
+        if _visual_image_bytes(slide):
+            parts.append("uploaded_visual: image")
+        if _uploaded_slide_pptx_bytes(slide):
+            parts.append("uploaded_visual: editable PPTX replacement")
         parts.append("")
     return "\n".join(parts)

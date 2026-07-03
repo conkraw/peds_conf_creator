@@ -123,3 +123,6 @@ Update v5.4: standard content slides now support an optional section box label. 
 
 
 Update v5.5: fixed GitHub-loaded presentations so the optional section box label and all other newer slide fields survive normalization. Added an on-screen confirmation when the section box is active and included the label in the mentor DOCX.
+
+
+Update v5.6: expanded the mentor review Word document to include every presentation-level planning field (including core question, story arc, archive notes, and audience/type) and every slide-specific field, including helper prompts, structured objectives, five take-home points, section box labels, visuals, discussion prompts, and speaker notes.
