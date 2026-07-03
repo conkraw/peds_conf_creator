@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.06.30-v4.6"
+APP_VERSION = "2026.07.03-v4.7"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -92,6 +92,7 @@ def new_slide(
         "body": "",
         "visual_plan": "",
         "visual_image": {},
+        "uploaded_slide_pptx": {},
         "visual_full_slide": False,
         "discussion_prompt": "",
         "objectives_intro": "",
@@ -295,6 +296,8 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
                 slide[key] = raw.get(key, "")
             visual_image = raw.get("visual_image", {})
             slide["visual_image"] = visual_image if isinstance(visual_image, dict) else {}
+            uploaded_slide_pptx = raw.get("uploaded_slide_pptx", {})
+            slide["uploaded_slide_pptx"] = uploaded_slide_pptx if isinstance(uploaded_slide_pptx, dict) else {}
             slide["visual_full_slide"] = bool(raw.get("visual_full_slide", False))
             normalized_slides.append(slide)
         if normalized_slides:

@@ -96,3 +96,6 @@ Update v4.5: refined the exported Objectives slide to match the visual reference
 
 
 Update v4.6: added a visible app-version marker in the sidebar and a visible objectives-card-layout confirmation in the Objectives editor so deployed/stale Streamlit versions are immediately obvious.
+
+
+Update v4.7: the single slide upload control now accepts either an image (PNG/JPEG) or a PPTX. If a PPTX is uploaded, the app uses the first slide of that file and replaces the corresponding exported PowerPoint slide. Images still support the half-slide/whole-slide behavior.

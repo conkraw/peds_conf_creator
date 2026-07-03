@@ -66,6 +66,13 @@ def _visual_image_filename(slide: Dict[str, Any]) -> str:
     return _safe_text(image.get("filename"))
 
 
+def _uploaded_slide_pptx_filename(slide: Dict[str, Any]) -> str:
+    pptx = slide.get("uploaded_slide_pptx", {})
+    if not isinstance(pptx, dict):
+        return ""
+    return _safe_text(pptx.get("filename"))
+
+
 def _body_width_inches(doc: Document) -> float:
     section = doc.sections[-1]
     return float(section.page_width - section.left_margin - section.right_margin) / EMU_PER_INCH
@@ -313,6 +320,11 @@ def _fit_image_dimensions(image_bytes: bytes, max_width: float = 4.85, max_heigh
 
 
 def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) -> None:
+    pptx_name = _uploaded_slide_pptx_filename(slide)
+    if pptx_name:
+        _add_field_row(table, "Uploaded visual", f"PPTX slide replacement: {pptx_name} (the first slide of this PPTX replaces the exported PowerPoint slide)", label_fill)
+        return
+
     image_bytes = _visual_image_bytes(slide)
     if not image_bytes:
         _add_field_row(table, "Uploaded visual", "[none]", label_fill)

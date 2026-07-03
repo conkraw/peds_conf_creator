@@ -151,8 +151,24 @@ def visual_image_bytes(slide: Dict[str, Any]) -> bytes | None:
         return None
 
 
+def get_uploaded_slide_pptx(slide: Dict[str, Any]) -> Dict[str, str]:
+    pptx = slide.get("uploaded_slide_pptx", {})
+    return pptx if isinstance(pptx, dict) else {}
+
+
+def uploaded_slide_pptx_bytes(slide: Dict[str, Any]) -> bytes | None:
+    pptx = get_uploaded_slide_pptx(slide)
+    encoded = pptx.get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
 def has_uploaded_visual(slide: Dict[str, Any]) -> bool:
-    return visual_image_bytes(slide) is not None
+    return visual_image_bytes(slide) is not None or uploaded_slide_pptx_bytes(slide) is not None
 
 
 def slide_nav_label(index: int, slide: Dict[str, Any]) -> str:
@@ -562,26 +578,49 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
-    """Store one optional image per slide and send it to PowerPoint/GitHub."""
-    st.caption("Optional: upload a PNG/JPEG visual. By default it takes half of the PowerPoint slide; check the box after upload to use the whole slide body.")
+    """Store one optional uploaded asset per slide: image or PPTX slide."""
+    st.caption("Optional: upload a PNG/JPEG image or a PPTX file. Images can appear beside text or fill the slide. A PPTX upload uses the first slide of that file and replaces this slide in the exported PowerPoint.")
     nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
     nonce = nonce_map.get(slide["id"], 0)
     uploaded = st.file_uploader(
-        "Upload visual image",
-        type=["png", "jpg", "jpeg"],
+        "Upload image or PPTX slide",
+        type=["png", "jpg", "jpeg", "pptx"],
         key=f"widget__{slide['id']}__visual_file__{nonce}",
-        help="Best for screenshots, figures you created, diagrams, or a focused data visual. Keep it under 5 MB so the GitHub draft stays lightweight.",
+        help="Use an image for a figure, screenshot, or diagram. Use a PPTX when you already built a polished slide and want that slide inserted instead of this one.",
     )
     if uploaded is not None:
         data = uploaded.getvalue()
-        if len(data) > 5 * 1024 * 1024:
-            st.error("This image is larger than 5 MB. Please compress or crop it before uploading.")
+        is_pptx = (uploaded.type == "application/vnd.openxmlformats-officedocument.presentationml.presentation") or uploaded.name.lower().endswith(".pptx")
+        max_mb = 15 if is_pptx else 5
+        if len(data) > max_mb * 1024 * 1024:
+            st.error(f"This file is larger than {max_mb} MB. Please compress it before uploading.")
         else:
-            slide["visual_image"] = {
-                "filename": uploaded.name,
-                "content_type": uploaded.type or "image/png",
-                "data_base64": base64.b64encode(data).decode("ascii"),
-            }
+            if is_pptx:
+                slide["uploaded_slide_pptx"] = {
+                    "filename": uploaded.name,
+                    "content_type": uploaded.type or "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "data_base64": base64.b64encode(data).decode("ascii"),
+                }
+                slide["visual_image"] = {}
+                slide["visual_full_slide"] = False
+            else:
+                slide["visual_image"] = {
+                    "filename": uploaded.name,
+                    "content_type": uploaded.type or "image/png",
+                    "data_base64": base64.b64encode(data).decode("ascii"),
+                }
+                slide["uploaded_slide_pptx"] = {}
+
+    pptx_info = get_uploaded_slide_pptx(slide)
+    pptx_bytes = uploaded_slide_pptx_bytes(slide)
+    if pptx_bytes:
+        st.info(f"Using uploaded PPTX slide: {pptx_info.get('filename', 'slide.pptx')}. The first slide of that PPTX will replace this slide in the exported PowerPoint.")
+        if st.button("Remove uploaded file", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
+            slide["uploaded_slide_pptx"] = {}
+            slide["visual_full_slide"] = False
+            nonce_map[slide["id"]] = nonce + 1
+            st.rerun()
+        return
 
     image_bytes = visual_image_bytes(slide)
     image_info = get_visual_image(slide)
@@ -593,14 +632,13 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
             key=f"widget__{slide['id']}__visual_full_slide",
             help="When checked, the uploaded image uses the full slide body instead of the half-slide visual layout.",
         )
-        if st.button("Remove uploaded visual", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
+        if st.button("Remove uploaded file", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
             slide["visual_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
             st.rerun()
     else:
         slide["visual_full_slide"] = False
-
 
 def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     slide_index = deck["slides"].index(slide) + 1

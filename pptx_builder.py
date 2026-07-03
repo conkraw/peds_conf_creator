@@ -12,6 +12,7 @@ import io
 import math
 import re
 import zipfile
+import posixpath
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
 
@@ -239,6 +240,21 @@ def get_visual_image(slide_data: Dict[str, Any]) -> Dict[str, str]:
 
 def visual_image_bytes(slide_data: Dict[str, Any]) -> bytes | None:
     encoded = get_visual_image(slide_data).get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def get_uploaded_slide_pptx(slide_data: Dict[str, Any]) -> Dict[str, str]:
+    pptx = slide_data.get("uploaded_slide_pptx", {})
+    return pptx if isinstance(pptx, dict) else {}
+
+
+def uploaded_slide_pptx_bytes(slide_data: Dict[str, Any]) -> bytes | None:
+    encoded = get_uploaded_slide_pptx(slide_data).get("data_base64")
     if not encoded:
         return None
     try:
@@ -512,6 +528,144 @@ def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: D
             add_body_lines(slide, body_lines, 0.85, 1.35, 11.5, 5.25, 22)
 
 
+def _rels_path_for(part_path: str) -> str:
+    folder = posixpath.dirname(part_path)
+    name = posixpath.basename(part_path)
+    return posixpath.join(folder, "_rels", f"{name}.rels")
+
+
+def _resolve_rel_target(part_path: str, target: str) -> str:
+    return posixpath.normpath(posixpath.join(posixpath.dirname(part_path), target))
+
+
+def _relative_target(from_part: str, to_part: str) -> str:
+    return posixpath.relpath(to_part, posixpath.dirname(from_part))
+
+
+def _content_type_maps(files: Dict[str, bytes]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    root = ET.fromstring(files["[Content_Types].xml"])
+    overrides = {}
+    defaults = {}
+    for node in root.findall(f"{{{CT_NS}}}Override"):
+        overrides[node.get("PartName", "").lstrip("/")] = node.get("ContentType", "")
+    for node in root.findall(f"{{{CT_NS}}}Default"):
+        defaults[node.get("Extension", "").lower()] = node.get("ContentType", "")
+    return overrides, defaults
+
+
+def _next_unique_part_path(dest_files: Dict[str, bytes], desired_path: str) -> str:
+    if desired_path not in dest_files:
+        return desired_path
+    base_dir = posixpath.dirname(desired_path)
+    stem, ext = posixpath.splitext(posixpath.basename(desired_path))
+    counter = 1
+    while True:
+        candidate = posixpath.join(base_dir, f"{stem}_import{counter}{ext}")
+        if candidate not in dest_files:
+            return candidate
+        counter += 1
+
+
+def _copy_part_recursive(
+    src_files: Dict[str, bytes],
+    dest_files: Dict[str, bytes],
+    src_overrides: Dict[str, str],
+    src_defaults: Dict[str, str],
+    src_part_path: str,
+    memo: Dict[str, str],
+    forced_dest_part: str | None = None,
+) -> str:
+    if forced_dest_part is None and src_part_path in memo:
+        return memo[src_part_path]
+
+    desired_dest = forced_dest_part or src_part_path
+    src_bytes = src_files[src_part_path]
+    if desired_dest in dest_files and dest_files[desired_dest] != src_bytes and forced_dest_part is None:
+        desired_dest = _next_unique_part_path(dest_files, desired_dest)
+
+    memo[src_part_path] = desired_dest
+    dest_files[desired_dest] = src_bytes
+
+    rels_src_path = _rels_path_for(src_part_path)
+    rels_dest_path = _rels_path_for(desired_dest)
+    if rels_src_path in src_files:
+        rel_root = ET.fromstring(src_files[rels_src_path])
+        for rel in rel_root.findall(f"{{{REL_NS}}}Relationship"):
+            if rel.get("TargetMode") == "External":
+                continue
+            target = rel.get("Target", "")
+            if not target:
+                continue
+            src_target_part = _resolve_rel_target(src_part_path, target)
+            if src_target_part not in src_files:
+                continue
+            dest_target_part = _copy_part_recursive(src_files, dest_files, src_overrides, src_defaults, src_target_part, memo)
+            rel.set("Target", _relative_target(desired_dest, dest_target_part))
+        dest_files[rels_dest_path] = ET.tostring(rel_root, encoding="utf-8", xml_declaration=True)
+    else:
+        dest_files.pop(rels_dest_path, None)
+
+    part_name = f"/{desired_dest}"
+    if part_name in src_overrides:
+        dest_files["[Content_Types].xml"] = _add_content_type_override(dest_files["[Content_Types].xml"], part_name, src_overrides[part_name])
+    else:
+        ext = posixpath.splitext(desired_dest)[1].lstrip(".").lower()
+        if ext and ext in src_defaults:
+            dest_files["[Content_Types].xml"] = _add_content_type_default(dest_files["[Content_Types].xml"], ext, src_defaults[ext])
+    return desired_dest
+
+
+def _source_first_slide_part(src_files: Dict[str, bytes]) -> str:
+    try:
+        pres = ET.fromstring(src_files["ppt/presentation.xml"])
+        ns = {"p": P_NS, "r": R_NS}
+        slide_id = pres.find("p:sldIdLst/p:sldId", ns)
+        if slide_id is not None:
+            rel_id = slide_id.get(f"{{{R_NS}}}id")
+            rels = ET.fromstring(src_files["ppt/_rels/presentation.xml.rels"])
+            for rel in rels.findall(f"{{{REL_NS}}}Relationship"):
+                if rel.get("Id") == rel_id:
+                    return _resolve_rel_target("ppt/presentation.xml", rel.get("Target", "slides/slide1.xml"))
+    except Exception:
+        pass
+    return "ppt/slides/slide1.xml"
+
+
+def replace_uploaded_pptx_slides(pptx_bytes: bytes, deck: Dict[str, Any]) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(pptx_bytes), "r") as zin:
+        dest_files = {name: zin.read(name) for name in zin.namelist()}
+
+    for slide_number, slide_data in enumerate(deck.get("slides", []), start=1):
+        replacement_bytes = uploaded_slide_pptx_bytes(slide_data)
+        if not replacement_bytes:
+            continue
+        try:
+            with zipfile.ZipFile(io.BytesIO(replacement_bytes), "r") as src_zip:
+                src_files = {name: src_zip.read(name) for name in src_zip.namelist()}
+            src_overrides, src_defaults = _content_type_maps(src_files)
+            src_slide_part = _source_first_slide_part(src_files)
+            if src_slide_part not in src_files:
+                continue
+            memo: Dict[str, str] = {}
+            _copy_part_recursive(
+                src_files,
+                dest_files,
+                src_overrides,
+                src_defaults,
+                src_slide_part,
+                memo,
+                forced_dest_part=f"ppt/slides/slide{slide_number}.xml",
+            )
+        except Exception:
+            continue
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name, data in dest_files.items():
+            zout.writestr(name, data)
+    return output.getvalue()
+
+
 def build_pptx(deck: Dict[str, Any]) -> bytes:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -535,7 +689,10 @@ def build_pptx(deck: Dict[str, Any]) -> bytes:
 
     buffer = io.BytesIO()
     prs.save(buffer)
-    return add_speaker_notes_to_pptx(buffer.getvalue(), speaker_notes)
+    pptx_bytes = buffer.getvalue()
+    if any(uploaded_slide_pptx_bytes(slide_data) for slide_data in deck.get("slides", [])):
+        pptx_bytes = replace_uploaded_pptx_slides(pptx_bytes, deck)
+    return add_speaker_notes_to_pptx(pptx_bytes, speaker_notes)
 
 
 # -----------------------------------------------------------------------------
@@ -558,8 +715,19 @@ def _add_content_type_override(content_types_xml: bytes, part_name: str, content
     root = ET.fromstring(content_types_xml)
     for override in root.findall(f"{{{CT_NS}}}Override"):
         if override.get("PartName") == part_name:
+            override.set("ContentType", content_type)
             return ET.tostring(root, encoding="utf-8", xml_declaration=True)
     ET.SubElement(root, f"{{{CT_NS}}}Override", PartName=part_name, ContentType=content_type)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _add_content_type_default(content_types_xml: bytes, extension: str, content_type: str) -> bytes:
+    ET.register_namespace("", CT_NS)
+    root = ET.fromstring(content_types_xml)
+    for default in root.findall(f"{{{CT_NS}}}Default"):
+        if default.get("Extension", "").lower() == extension.lower().lstrip("."):
+            return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    ET.SubElement(root, f"{{{CT_NS}}}Default", Extension=extension.lstrip("."), ContentType=content_type)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
