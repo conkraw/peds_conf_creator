@@ -22,6 +22,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from deck_model import APP_VERSION, BLOOM_HELPER, identity_subtitle, identity_title, slide_output_title, split_nonempty_lines
+from preview_utils import render_pptx_first_slide_to_png
 
 BLUE = "1F4E79"
 LIGHT_BLUE = "D9EAF7"
@@ -84,6 +85,38 @@ def _uploaded_slide_pptx_bytes(slide: Dict[str, Any]) -> bytes | None:
         return base64.b64decode(encoded)
     except Exception:
         return None
+
+
+def _uploaded_slide_preview_image_bytes(slide: Dict[str, Any]) -> bytes | None:
+    image = slide.get("uploaded_slide_preview_image", {})
+    if not isinstance(image, dict):
+        return None
+    encoded = image.get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def _ensure_uploaded_slide_preview_image(slide: Dict[str, Any]) -> bytes | None:
+    preview = _uploaded_slide_preview_image_bytes(slide)
+    if preview:
+        return preview
+    pptx_bytes = _uploaded_slide_pptx_bytes(slide)
+    if not pptx_bytes:
+        return None
+    preview = render_pptx_first_slide_to_png(pptx_bytes)
+    if preview:
+        filename = _uploaded_slide_pptx_filename(slide) or "uploaded_slide.pptx"
+        stem = filename.rsplit('.', 1)[0]
+        slide["uploaded_slide_preview_image"] = {
+            "filename": f"{stem}_preview.png",
+            "content_type": "image/png",
+            "data_base64": base64.b64encode(preview).decode("ascii"),
+        }
+    return preview
 
 
 def _body_width_inches(doc: Document) -> float:
@@ -406,17 +439,13 @@ def _fit_image_dimensions(image_bytes: bytes, max_width: float = 4.85, max_heigh
 
 def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) -> None:
     pptx_name = _uploaded_slide_pptx_filename(slide)
-    if pptx_name:
-        _add_field_row(
-            table,
-            "Uploaded visual",
-            "Editable PPTX slide replacement uploaded. The first slide is imported into the exported PowerPoint as editable objects.",
-            label_fill,
-        )
-        return
-
     image_bytes = _visual_image_bytes(slide)
-    if not image_bytes:
+    image_note = ""
+    if pptx_name:
+        image_bytes = _ensure_uploaded_slide_preview_image(slide)
+        image_note = f"Editable PPTX slide replacement uploaded: {pptx_name}. Preview shown below. The first slide is imported into the exported PowerPoint as editable objects."
+
+    if not image_bytes and not image_note:
         _add_field_row(table, "Uploaded visual", "[none]", label_fill)
         return
 
@@ -432,19 +461,29 @@ def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) 
     _write_cell_text(label_cell, "Uploaded visual", font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
 
     _clear_cell(value_cell)
+    if image_note:
+        note_p = value_cell.paragraphs[0]
+        note_p.paragraph_format.space_after = Pt(4)
+        note_run = note_p.add_run(image_note)
+        note_run.font.name = DOC_FONT
+        note_run.font.size = Pt(8.5)
+        note_run.font.color.rgb = TEXT_MUTED
     try:
-        image_width, image_height = _fit_image_dimensions(image_bytes)
-        image_p = value_cell.paragraphs[0]
-        image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        image_p.paragraph_format.space_after = Pt(0)
-        image_run = image_p.add_run()
-        image_run.add_picture(
-            BytesIO(image_bytes),
-            width=Inches(image_width),
-            height=Inches(image_height),
-        )
+        if image_bytes:
+            image_width, image_height = _fit_image_dimensions(image_bytes)
+            image_p = value_cell.add_paragraph() if image_note else value_cell.paragraphs[0]
+            image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            image_p.paragraph_format.space_after = Pt(0)
+            image_run = image_p.add_run()
+            image_run.add_picture(
+                BytesIO(image_bytes),
+                width=Inches(image_width),
+                height=Inches(image_height),
+            )
+        elif image_note:
+            value_cell.add_paragraph("[Preview image could not be generated for this PPTX in the current environment.]")
     except Exception:
-        value_cell.paragraphs[0].add_run("[Uploaded visual could not be rendered in Word preview]")
+        value_cell.add_paragraph("[Uploaded visual could not be rendered in Word preview]")
 
 
 def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> None:
@@ -518,7 +557,7 @@ def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str
     represented_keys = {
         "id", "role", "slide_kind", "required", "prompt", "title", "subtitle",
         "section_box_label", "body", "visual_plan", "visual_image",
-        "uploaded_slide_pptx", "visual_full_slide", "discussion_prompt",
+        "uploaded_slide_pptx", "uploaded_slide_preview_image", "visual_full_slide", "discussion_prompt",
         "speaker_notes", "objectives_intro", "objective_1_verb",
         "objective_1_text", "objective_2_verb", "objective_2_text",
         "objective_3_verb", "objective_3_text", "objectives_takeaway",
@@ -639,7 +678,7 @@ def build_plain_text_summary(deck: Dict[str, Any]) -> str:
             parts.append(f"{key}: {value}")
     parts.append("")
 
-    excluded = {"id", "visual_image", "uploaded_slide_pptx"}
+    excluded = {"id", "visual_image", "uploaded_slide_pptx", "uploaded_slide_preview_image"}
     for idx, slide in enumerate(deck.get("slides", []), start=1):
         parts.append(f"Slide {idx}: {slide_output_title(deck, slide, idx)}")
         for key, raw_value in slide.items():

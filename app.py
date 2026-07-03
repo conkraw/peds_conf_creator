@@ -50,6 +50,7 @@ from github_storage import (
     delete_archive_from_github,
 )
 from pptx_builder import build_pptx
+from preview_utils import render_pptx_first_slide_to_png
 
 
 def objective_verb_options() -> List[str]:
@@ -165,6 +166,41 @@ def uploaded_slide_pptx_bytes(slide: Dict[str, Any]) -> bytes | None:
         return base64.b64decode(encoded)
     except Exception:
         return None
+
+
+def get_uploaded_slide_preview_image(slide: Dict[str, Any]) -> Dict[str, str]:
+    image = slide.get("uploaded_slide_preview_image", {})
+    return image if isinstance(image, dict) else {}
+
+
+def uploaded_slide_preview_bytes(slide: Dict[str, Any]) -> bytes | None:
+    image = get_uploaded_slide_preview_image(slide)
+    encoded = image.get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def ensure_uploaded_slide_preview(slide: Dict[str, Any]) -> bytes | None:
+    preview = uploaded_slide_preview_bytes(slide)
+    if preview:
+        return preview
+    pptx_bytes = uploaded_slide_pptx_bytes(slide)
+    if not pptx_bytes:
+        return None
+    preview = render_pptx_first_slide_to_png(pptx_bytes)
+    if preview:
+        filename = get_uploaded_slide_pptx(slide).get("filename", "uploaded_slide.pptx")
+        stem = filename.rsplit('.', 1)[0]
+        slide["uploaded_slide_preview_image"] = {
+            "filename": f"{stem}_preview.png",
+            "content_type": "image/png",
+            "data_base64": base64.b64encode(preview).decode("ascii"),
+        }
+    return preview
 
 
 def count_pptx_slides(pptx_bytes: bytes | None) -> int:
@@ -681,7 +717,12 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                 }
                 slide["visual_image"] = {}
                 slide["visual_full_slide"] = False
-                st.success(f"Stored PPTX slide replacement: {uploaded.name}. First slide will be imported as editable PowerPoint objects in exports.")
+                slide["uploaded_slide_preview_image"] = {}
+                preview_bytes = ensure_uploaded_slide_preview(slide)
+                if preview_bytes:
+                    st.success(f"Stored PPTX slide replacement: {uploaded.name}. First slide will be imported as editable PowerPoint objects in exports, and a preview image was generated.")
+                else:
+                    st.warning(f"Stored PPTX slide replacement: {uploaded.name}. The slide will still export as editable PowerPoint objects, but preview generation was not available right now.")
             else:
                 slide["visual_image"] = {
                     "filename": uploaded.name,
@@ -689,6 +730,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
                 slide["uploaded_slide_pptx"] = {}
+                slide["uploaded_slide_preview_image"] = {}
                 st.success(f"Stored image visual: {uploaded.name}.")
 
     pptx_info = get_uploaded_slide_pptx(slide)
@@ -697,8 +739,22 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
         slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
         slide_word = "slide" if slide_count == 1 else "slides"
         st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
+        preview_bytes = ensure_uploaded_slide_preview(slide)
+        if preview_bytes:
+            st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", use_container_width=True)
+        else:
+            st.info("Preview image is not available yet for this PPTX. The editable PPTX replacement will still export.")
+        st.download_button(
+            "Download uploaded PPTX",
+            data=pptx_bytes,
+            file_name=pptx_info.get("filename", "uploaded_slide.pptx"),
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+            key=f"widget__{slide['id']}__download_uploaded_pptx",
+        )
         if st.button("Remove uploaded file", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
             slide["uploaded_slide_pptx"] = {}
+            slide["uploaded_slide_preview_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
             st.rerun()
@@ -708,6 +764,14 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
     image_info = get_visual_image(slide)
     if image_bytes:
         st.image(image_bytes, caption=image_info.get("filename", "Uploaded visual"), use_container_width=True)
+        st.download_button(
+            "Download uploaded image",
+            data=image_bytes,
+            file_name=image_info.get("filename", "uploaded_visual.png"),
+            mime=image_info.get("content_type", "image/png"),
+            use_container_width=True,
+            key=f"widget__{slide['id']}__download_uploaded_image",
+        )
         slide["visual_full_slide"] = st.checkbox(
             "Use this visual as a whole-slide PowerPoint visual",
             value=bool(slide.get("visual_full_slide", False)),
@@ -716,6 +780,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
         )
         if st.button("Remove uploaded file", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
             slide["visual_image"] = {}
+            slide["uploaded_slide_preview_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
             st.rerun()

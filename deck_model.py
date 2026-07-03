@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.03-v5.7"
+APP_VERSION = "2026.07.03-v5.8"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -94,6 +94,7 @@ def new_slide(
         "visual_plan": "",
         "visual_image": {},
         "uploaded_slide_pptx": {},
+        "uploaded_slide_preview_image": {},
         "visual_full_slide": False,
         "discussion_prompt": "",
         "objectives_intro": "",
