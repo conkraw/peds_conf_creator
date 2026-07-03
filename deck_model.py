@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.03-v5.2"
+APP_VERSION = "2026.07.03-v5.3"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -103,6 +103,11 @@ def new_slide(
         "objective_3_verb": "",
         "objective_3_text": "",
         "objectives_takeaway": "",
+        "takehome_point_1": "",
+        "takehome_point_2": "",
+        "takehome_point_3": "",
+        "takehome_point_4": "",
+        "takehome_point_5": "",
         "speaker_notes": "",
         "slide_kind": slide_kind,
         "required": required,
@@ -129,6 +134,25 @@ def objectives_slide() -> Dict[str, Any]:
     return slide
 
 
+
+def takehome_slide() -> Dict[str, Any]:
+    slide = new_slide("Take-home", "Take-home points", "End with 5 resident-facing, practical points.", True, "takehome")
+    slide["subtitle"] = "A resident-friendly summary of the main clinical or educational message."
+    slide["takehome_point_1"] = "Start with a real clinical question."
+    slide["takehome_point_2"] = "Use PICO to make the question searchable."
+    slide["takehome_point_3"] = "Read methods and results before trusting conclusions."
+    slide["takehome_point_4"] = "Look for absolute effect, uncertainty, harms, and applicability."
+    slide["takehome_point_5"] = "Make a decision, then reassess what happened."
+    slide["discussion_prompt"] = "What is one clinical question from this week that could become a journal club?"
+    slide["body"] = "\n".join([
+        slide["takehome_point_1"],
+        slide["takehome_point_2"],
+        slide["takehome_point_3"],
+        slide["takehome_point_4"],
+        slide["takehome_point_5"],
+    ])
+    return slide
+
 def disclosures_slide() -> Dict[str, Any]:
     slide = new_slide("Disclosures", "Disclosures", "State relevant financial/non-financial disclosures, or state that there are none.", True, "disclosures")
     slide["body"] = DEFAULT_DISCLOSURE
@@ -147,7 +171,7 @@ def starter_slides_for_talk_type(talk_type: str) -> List[Dict[str, Any]]:
                 new_slide("Results", "What they found", "Present the main result without data dumping."),
                 new_slide("Discussion", "How much should we trust this?", "Appraise bias, precision, generalizability, and clinical relevance."),
                 new_slide("Application", "How this changes our thinking", "Return to patient care, education, operations, policy, or the next research question."),
-                new_slide("Take-home", "Take-home points", "End with 2-3 practical conclusions.", True),
+                takehome_slide(),
             ]
         )
     elif talk_type == "Research / QI Update":
@@ -158,7 +182,7 @@ def starter_slides_for_talk_type(talk_type: str) -> List[Dict[str, Any]]:
                 new_slide("Results", "What we are seeing", "Show the main finding, run chart, table, or early signal."),
                 new_slide("Discussion", "What this means", "Interpret the results and limitations."),
                 new_slide("Application", "Next steps", "Clarify what feedback, decision, or action you need from the audience."),
-                new_slide("Take-home", "Take-home points", "End with 2-3 practical conclusions.", True),
+                takehome_slide(),
             ]
         )
     elif talk_type == "Case-Based Teaching":
@@ -169,7 +193,7 @@ def starter_slides_for_talk_type(talk_type: str) -> List[Dict[str, Any]]:
                 new_slide("Story", "What are you worried about now?", "Pause for differential, prioritization, or management decision."),
                 new_slide("Evidence / Data", "Key data that changed the case", "Reveal labs, imaging, trends, or response to therapy."),
                 new_slide("Application", "How we should approach this next time", "Convert the case into a generalizable approach."),
-                new_slide("Take-home", "Take-home points", "End with 2-3 bedside-ready teaching points.", True),
+                takehome_slide(),
             ]
         )
     else:
@@ -180,7 +204,7 @@ def starter_slides_for_talk_type(talk_type: str) -> List[Dict[str, Any]]:
                 new_slide("Story", "Key idea 1", "Teach the first major concept."),
                 new_slide("Story", "Key idea 2", "Teach the second major concept."),
                 new_slide("Application", "How this changes our thinking", "Return to patient care, interpretation, or practical decision-making."),
-                new_slide("Take-home", "Take-home points", "End with 2-3 actionable points.", True),
+                takehome_slide(),
             ]
         )
     return base

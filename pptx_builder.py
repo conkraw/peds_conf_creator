@@ -379,6 +379,62 @@ def add_objective_card(slide, idx: int, verb: str, text: str, x: float, y: float
     run.font.color.rgb = _rgb((28, 37, 55))
 
 
+def takehome_points_from_slide(slide_data: Dict[str, Any]) -> List[str]:
+    points = [
+        _safe_text(slide_data.get(f"takehome_point_{idx}", "")).strip()
+        for idx in range(1, 6)
+    ]
+    points = [point for point in points if point]
+    if points:
+        return points[:5]
+    return [re.sub(r"^\s*(?:[-•]|\d+[.)])\s*", "", line).strip() for line in split_nonempty_lines(slide_data.get("body", ""))][:5]
+
+
+def estimate_takehome_font_size(text: str) -> int:
+    words = len(re.findall(r"\w+", text or ""))
+    chars = len((text or "").strip())
+    if words > 16 or chars > 90:
+        return 15
+    if words > 11 or chars > 60:
+        return 18
+    return 20
+
+
+def add_takehome_point(slide, idx: int, text: str, x: float, y: float, text_w: float) -> None:
+    circle = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.OVAL, Inches(x), Inches(y), Inches(0.34), Inches(0.34))
+    circle.fill.solid()
+    circle.fill.fore_color.rgb = _rgb(TITLE_BLUE)
+    circle.line.color.rgb = _rgb(TITLE_BLUE)
+    ctf = circle.text_frame
+    ctf.clear()
+    ctf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    cp = ctf.paragraphs[0]
+    cp.alignment = PP_ALIGN.CENTER
+    cr = cp.add_run()
+    cr.text = str(idx)
+    cr.font.name = "Aptos"
+    cr.font.size = Pt(11)
+    cr.font.bold = True
+    cr.font.color.rgb = _rgb(WHITE)
+
+    box = slide.shapes.add_textbox(Inches(x + 0.46), Inches(y - 0.02), Inches(text_w), Inches(0.58))
+    tf = box.text_frame
+    tf.clear()
+    tf.word_wrap = True
+    tf.margin_left = Inches(0.02)
+    tf.margin_right = Inches(0.02)
+    tf.margin_top = Inches(0.02)
+    tf.margin_bottom = Inches(0.02)
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.LEFT
+    run = p.add_run()
+    run.text = text or f"Take-home point {idx}"
+    run.font.name = "Aptos"
+    run.font.size = Pt(estimate_takehome_font_size(text))
+    run.font.bold = True if idx == 1 else False
+    run.font.color.rgb = _rgb((20, 29, 45))
+
+
 # -----------------------------------------------------------------------------
 # Slide renderers
 # -----------------------------------------------------------------------------
@@ -487,6 +543,66 @@ def render_objectives_slide(prs: Presentation, deck: Dict[str, Any], slide_data:
         run.font.size = Pt(17)
         run.font.bold = True
         run.font.color.rgb = _rgb((25, 35, 52))
+
+
+def render_takehome_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    title = slide_output_title(deck, slide_data, index)
+    subtitle = _safe_text(slide_data.get("subtitle", "")).strip()
+    image_data = visual_image_bytes(slide_data)
+    discussion = _safe_text(slide_data.get("discussion_prompt", "")).strip()
+    points = takehome_points_from_slide(slide_data)
+    while len(points) < 5:
+        points.append("")
+
+    if image_data and visual_uses_full_slide(slide_data):
+        add_title_bar(slide, title, subtitle)
+        add_image_fit(slide, image_data, 0.55, 0.95, 12.25, 6.10)
+        return
+
+    add_textbox(slide, title, 0.30, 0.16, 6.7, 0.46, 24, True, TITLE_BLUE)
+    if subtitle:
+        add_textbox(slide, subtitle, 0.30, 0.60, 6.8, 0.20, 10, False, GRAY_TEXT)
+    divider = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(0.30), Inches(0.86), Inches(12.45), Inches(0.012))
+    divider.fill.solid()
+    divider.fill.fore_color.rgb = _rgb(BORDER_BLUE)
+    divider.line.color.rgb = _rgb(BORDER_BLUE)
+
+    left_x = 0.62
+    start_y = 1.08
+    row_h = 0.72
+    if image_data:
+        text_w = 5.95
+        image_x, image_y, image_w, image_h = 8.65, 1.38, 3.55, 3.95
+        add_image_fit(slide, image_data, image_x, image_y, image_w, image_h)
+    else:
+        text_w = 9.55
+
+    for idx_point, point in enumerate(points[:5], start=1):
+        add_takehome_point(slide, idx_point, point or f"Add take-home point {idx_point}.", left_x, start_y + (idx_point - 1) * row_h, text_w)
+
+    if discussion:
+        label = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, Inches(0.55), Inches(6.28), Inches(0.78), Inches(0.22))
+        label.fill.solid()
+        label.fill.fore_color.rgb = _rgb(TITLE_BLUE)
+        label.line.color.rgb = _rgb(TITLE_BLUE)
+        ltf = label.text_frame
+        ltf.clear()
+        lp = ltf.paragraphs[0]
+        lp.alignment = PP_ALIGN.CENTER
+        lr = lp.add_run()
+        lr.text = "Discuss"
+        lr.font.name = "Aptos"
+        lr.font.size = Pt(8)
+        lr.font.bold = True
+        lr.font.color.rgb = _rgb(WHITE)
+        add_textbox(slide, discussion, 1.36, 6.18, 10.7, 0.35, 11, False, GRAY_TEXT)
+        # make it slightly italic via XML font attribute when available
+        try:
+            tx = slide.shapes[-1].text_frame.paragraphs[0].runs[0]
+            tx.font.italic = True
+        except Exception:
+            pass
 
 
 def render_disclosures_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
@@ -920,6 +1036,8 @@ def build_pptx(deck: Dict[str, Any]) -> bytes:
             render_objectives_slide(prs, deck, slide_data, output_index)
         elif kind == "disclosures" or role == "Disclosures":
             render_disclosures_slide(prs, deck, slide_data, output_index)
+        elif kind == "takehome" or role == "Take-home":
+            render_takehome_slide(prs, deck, slide_data, output_index)
         else:
             render_standard_slide(prs, deck, slide_data, output_index)
         speaker_notes.append(_safe_text(slide_data.get("speaker_notes", "")))

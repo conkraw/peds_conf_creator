@@ -205,6 +205,10 @@ def validation_messages(deck: Dict[str, Any]) -> List[str]:
             objective_count = len(split_nonempty_lines(slide.get("body", "")))
             if objective_count < 1:
                 messages.append(f"Slide {idx} objectives are blank.")
+        elif role == "Take-home":
+            takehome_count = len([1 for i in range(1, 6) if str(slide.get(f"takehome_point_{i}", "")).strip()])
+            if takehome_count < 1 and not has_uploaded_visual(slide):
+                messages.append(f"Slide {idx} take-home points are blank.")
         elif role != "Title" and not str(slide.get("body", "")).strip() and not has_uploaded_visual(slide):
             messages.append(f"Slide {idx} has no main slide text or uploaded visual.")
     return messages
@@ -311,6 +315,35 @@ def sync_objectives_body(slide: Dict[str, Any]) -> None:
         if verb or text:
             summary_lines.append(f"{verb}: {text}".strip(": "))
     slide["body"] = "\n".join(summary_lines)
+
+
+def ensure_takehome_fields(slide: Dict[str, Any]) -> None:
+    defaults = [
+        "Start with a real clinical question.",
+        "Use PICO to make the question searchable.",
+        "Read methods and results before trusting conclusions.",
+        "Look for absolute effect, uncertainty, harms, and applicability.",
+        "Make a decision, then reassess what happened.",
+    ]
+    lines = []
+    for raw in split_nonempty_lines(slide.get("body", "")):
+        cleaned = re.sub(r"^\s*(?:[-•]|\d+[.)])\s*", "", raw).strip()
+        lines.append(cleaned)
+
+    for idx in range(1, 6):
+        key = f"takehome_point_{idx}"
+        if not slide.get(key):
+            line = lines[idx - 1] if idx - 1 < len(lines) else defaults[idx - 1]
+            slide[key] = line
+
+
+def sync_takehome_body(slide: Dict[str, Any]) -> None:
+    ensure_takehome_fields(slide)
+    slide["body"] = "\n".join(
+        str(slide.get(f"takehome_point_{idx}", "")).strip()
+        for idx in range(1, 6)
+        if str(slide.get(f"takehome_point_{idx}", "")).strip()
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -568,6 +601,33 @@ def render_objectives_editor(slide: Dict[str, Any]) -> None:
     widget_text(slide, "speaker_notes", "Speaker notes", height=120, multiline=True)
 
 
+def render_takehome_editor(slide: Dict[str, Any]) -> None:
+    st.markdown("### Take-home points")
+    st.caption("Add up to 5 practical take-home points. In the exported PowerPoint they render as numbered points with circle markers. You can also upload an optional image for the right side of the slide.")
+    ensure_takehome_fields(slide)
+    widget_text(slide, "title", "Slide title", help_text="Usually something like 'Take-home points' or 'What to remember'.")
+    widget_text(slide, "subtitle", "Short subtitle / setup line", help_text="Small line under the title to frame the summary.")
+
+    for idx in range(1, 6):
+        key = f"takehome_point_{idx}"
+        slide[key] = st.text_input(
+            f"Point {idx}",
+            value=slide.get(key, ""),
+            key=f"widget__{slide['id']}__{key}",
+            placeholder=f"Enter take-home point {idx}.",
+        )
+
+    sync_takehome_body(slide)
+    point_count = sum(1 for idx in range(1, 6) if str(slide.get(f"takehome_point_{idx}", "")).strip())
+    st.caption(f"{point_count} take-home point(s) populated.")
+
+    st.markdown("#### Optional slide visual")
+    st.caption("Upload an image for the right side of the take-home slide. If you check whole-slide mode, the visual can take over the slide body instead.")
+    render_visual_upload(slide)
+    widget_text(slide, "discussion_prompt", "Optional discussion prompt at bottom", height=90, multiline=True, help_text="Optional closing question or prompt shown near the bottom of the take-home slide.")
+    widget_text(slide, "speaker_notes", "Speaker notes", height=120, multiline=True)
+
+
 def render_disclosures_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Disclosures")
     widget_text(slide, "title", "Slide title")
@@ -725,6 +785,8 @@ def render_slide_editor(deck: Dict[str, Any]) -> None:
         render_objectives_editor(slide)
     elif role == "Disclosures" or kind == "disclosures":
         render_disclosures_editor(slide)
+    elif role == "Take-home" or kind == "takehome":
+        render_takehome_editor(slide)
     else:
         render_standard_editor(deck, slide)
 

@@ -114,3 +114,6 @@ Update v5.1: PPTX uploads now render through a more reliable LibreOffice-to-PDF 
 
 
 Update v5.2: PPTX uploads now import the first uploaded slide as editable PowerPoint objects instead of rasterizing to PNG. This preserves editability for text boxes, images, tables, and many charts. Complex animations/transitions and some SmartArt may not fully preserve.
+
+
+Update v5.3: added a dedicated Take-home points slide editor with five structured points, a numbered-circle PowerPoint layout, optional bottom discussion prompt, and support for an optional right-side visual upload.
