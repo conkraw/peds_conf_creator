@@ -477,6 +477,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     col1, col2 = st.columns([1.55, 1])
     with col1:
         meta["presentation_title"] = st.text_input("Presentation title", meta.get("presentation_title", ""), placeholder="Untitled presentation")
+        meta["presentation_subtitle"] = st.text_input("Presentation subtitle", meta.get("presentation_subtitle", ""), placeholder="Optional subtitle under the title")
         meta["presenter"] = st.text_input("Presenter", meta.get("presenter", ""), placeholder="Presenter not entered")
         meta["audience"] = st.text_input("Audience", meta.get("audience", "Pediatric residents"))
     with col2:

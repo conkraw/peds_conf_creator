@@ -389,6 +389,7 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
     slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
 
     title = meta.get("presentation_title") or slide_data.get("title") or "Untitled Presentation"
+    subtitle = _safe_text(meta.get("presentation_subtitle", "")).strip()
     presenter = meta.get("presenter") or "Presenter not entered"
     date = meta.get("session_date") or "Date not entered"
     audience = meta.get("audience") or "Audience not entered"
@@ -401,12 +402,17 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
             # keep the required title information in a compact readable panel.
             add_image_fit(slide, image_data, 0.35, 0.35, 12.65, 6.80)
             add_section_panel(slide, 0.55, 0.70, 5.85, 2.65)
-            add_textbox(slide, title, 0.78, 0.95, 5.35, 0.95, 24, True, TITLE_BLUE, fill=PALE_BLUE)
-            add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.82, 1.95, 5.15, 1.05, 13, False, GRAY_TEXT, fill=PALE_BLUE)
+            title_h = 0.62 if subtitle else 0.95
+            add_textbox(slide, title, 0.78, 0.90, 5.35, title_h, 24, True, TITLE_BLUE, fill=PALE_BLUE)
+            if subtitle:
+                add_textbox(slide, subtitle, 0.82, 1.50, 5.15, 0.32, 13, False, GRAY_TEXT, fill=PALE_BLUE)
+            add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.82, 1.92, 5.15, 1.05, 13, False, GRAY_TEXT, fill=PALE_BLUE)
         else:
             # Split title slide: text on the left, optional visual on the right.
-            add_textbox(slide, title, 0.70, 0.92, 6.0, 1.25, 30, True, TITLE_BLUE)
-            add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.78, 2.30, 4.8, 1.35, 17, False, GRAY_TEXT)
+            add_textbox(slide, title, 0.70, 0.82, 6.0, 0.92, 30, True, TITLE_BLUE)
+            if subtitle:
+                add_textbox(slide, subtitle, 0.78, 1.72, 5.7, 0.38, 15, False, GRAY_TEXT)
+            add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.78, 2.28, 4.8, 1.35, 17, False, GRAY_TEXT)
             add_section_panel(slide, 7.05, 0.95, 5.55, 5.05)
             add_image_fit(slide, image_data, 7.25, 1.15, 5.15, 4.65)
 
@@ -414,8 +420,10 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
             story_arc = _safe_text(meta.get("story_arc", "")).strip()
             add_title_context_panel(slide, core_question, story_arc, 0.78, 3.92, 5.95, 2.48)
     else:
-        add_textbox(slide, title, 0.75, 1.10, 11.8, 1.25, 34, True, TITLE_BLUE)
-        add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.65, 8.8, 1.15, 18, False, GRAY_TEXT)
+        add_textbox(slide, title, 0.75, 0.95, 11.8, 0.90, 34, True, TITLE_BLUE)
+        if subtitle:
+            add_textbox(slide, subtitle, 0.82, 1.82, 11.2, 0.38, 16, False, GRAY_TEXT)
+        add_textbox(slide, f"{presenter}\n{date}\n{audience}\n{talk_type}", 0.80, 2.55, 8.8, 1.15, 18, False, GRAY_TEXT)
 
         core_question = _safe_text(meta.get("core_question", "")).strip()
         story_arc = _safe_text(meta.get("story_arc", "")).strip()
@@ -590,7 +598,11 @@ def _copy_part_recursive(
     rels_dest_path = _rels_path_for(desired_dest)
     if rels_src_path in src_files:
         rel_root = ET.fromstring(src_files[rels_src_path])
-        for rel in rel_root.findall(f"{{{REL_NS}}}Relationship"):
+        for rel in list(rel_root.findall(f"{{{REL_NS}}}Relationship")):
+            rel_type = rel.get("Type", "")
+            if rel_type.endswith(("/notesSlide", "/comments", "/commentAuthors")):
+                rel_root.remove(rel)
+                continue
             if rel.get("TargetMode") == "External":
                 continue
             target = rel.get("Target", "")
@@ -614,6 +626,88 @@ def _copy_part_recursive(
             dest_files["[Content_Types].xml"] = _add_content_type_default(dest_files["[Content_Types].xml"], ext, src_defaults[ext])
     return desired_dest
 
+
+
+def _ensure_slide_master_registered(dest_files: Dict[str, bytes], slide_number: int) -> None:
+    """Register the imported slide's master in presentation.xml if needed.
+
+    PowerPoint can repair imported slides when a slide points to an imported
+    slideLayout whose slideMaster is present in the package but not listed in
+    ppt/presentation.xml. This makes the master relationship explicit.
+    """
+    slide_part = f"ppt/slides/slide{slide_number}.xml"
+    slide_rels_path = _rels_path_for(slide_part)
+    if slide_rels_path not in dest_files:
+        return
+
+    try:
+        slide_rels = ET.fromstring(dest_files[slide_rels_path])
+        layout_part = None
+        for rel in slide_rels.findall(f"{{{REL_NS}}}Relationship"):
+            if rel.get("Type", "").endswith("/slideLayout"):
+                layout_part = _resolve_rel_target(slide_part, rel.get("Target", ""))
+                break
+        if not layout_part:
+            return
+
+        layout_rels_path = _rels_path_for(layout_part)
+        if layout_rels_path not in dest_files:
+            return
+        layout_rels = ET.fromstring(dest_files[layout_rels_path])
+        master_part = None
+        for rel in layout_rels.findall(f"{{{REL_NS}}}Relationship"):
+            if rel.get("Type", "").endswith("/slideMaster"):
+                master_part = _resolve_rel_target(layout_part, rel.get("Target", ""))
+                break
+        if not master_part or master_part not in dest_files:
+            return
+
+        pres_rels_path = "ppt/_rels/presentation.xml.rels"
+        pres_path = "ppt/presentation.xml"
+        pres_rels = ET.fromstring(dest_files[pres_rels_path])
+        existing_rid = None
+        for rel in pres_rels.findall(f"{{{REL_NS}}}Relationship"):
+            if rel.get("Type", "").endswith("/slideMaster"):
+                rel_target = _resolve_rel_target("ppt/presentation.xml", rel.get("Target", ""))
+                if rel_target == master_part:
+                    existing_rid = rel.get("Id")
+                    break
+
+        if existing_rid is None:
+            existing_rid = _next_rid(pres_rels)
+            ET.SubElement(
+                pres_rels,
+                f"{{{REL_NS}}}Relationship",
+                Id=existing_rid,
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster",
+                Target=_relative_target("ppt/presentation.xml", master_part),
+            )
+            dest_files[pres_rels_path] = ET.tostring(pres_rels, encoding="utf-8", xml_declaration=True)
+
+        pres = ET.fromstring(dest_files[pres_path])
+        ns = {"p": P_NS, "r": R_NS}
+        master_list = pres.find("p:sldMasterIdLst", ns)
+        if master_list is None:
+            master_list = ET.Element(f"{{{P_NS}}}sldMasterIdLst")
+            pres.insert(0, master_list)
+
+        for master_id in master_list.findall(f"{{{P_NS}}}sldMasterId"):
+            if master_id.get(f"{{{R_NS}}}id") == existing_rid:
+                return
+
+        used_ids = []
+        for master_id in master_list.findall(f"{{{P_NS}}}sldMasterId"):
+            try:
+                used_ids.append(int(master_id.get("id", "0")))
+            except Exception:
+                pass
+        new_id = max(used_ids or [2147483647]) + 1
+        master_id = ET.SubElement(master_list, f"{{{P_NS}}}sldMasterId")
+        master_id.set("id", str(new_id))
+        master_id.set(f"{{{R_NS}}}id", existing_rid)
+        dest_files[pres_path] = ET.tostring(pres, encoding="utf-8", xml_declaration=True)
+    except Exception:
+        return
 
 def _source_first_slide_part(src_files: Dict[str, bytes]) -> str:
     try:
@@ -677,6 +771,7 @@ def replace_uploaded_pptx_slides(pptx_bytes: bytes, deck: Dict[str, Any]) -> byt
                 memo,
                 forced_dest_part=f"ppt/slides/slide{slide_number}.xml",
             )
+            _ensure_slide_master_registered(dest_files, slide_number)
         except Exception:
             continue
 

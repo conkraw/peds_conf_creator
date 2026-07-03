@@ -102,3 +102,6 @@ Update v4.7: the single slide upload control now accepts either an image (PNG/JP
 
 
 Update v4.8: added stronger PPTX-upload status messages, export-panel confirmation when a PPTX slide replacement is active, a fallback placeholder slide if replacement fails, and retained mentor DOCX notation for PPTX slide replacements.
+
+
+Update v4.9: added an optional presentation subtitle on the title slide and tightened PPTX slide replacement packaging so imported slide masters are registered and source notes/comments are not copied, reducing PowerPoint repair prompts.
