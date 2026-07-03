@@ -259,25 +259,25 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
         st.caption("All slides export to PowerPoint automatically.")
         st.divider()
 
-        st.subheader("Add slides")
-        new_role = st.selectbox("New slide role", SLIDE_ROLES, index=SLIDE_ROLES.index("Custom / Unknown title"))
-        new_title = st.text_input("New slide title", placeholder="Leave blank if you do not know it yet")
-        new_prompt = st.text_area("Optional helper prompt", height=75, placeholder="What should this slide help the presenter do?")
+        with st.expander("Add slides", expanded=False):
+            new_role = st.selectbox("New slide role", SLIDE_ROLES, index=SLIDE_ROLES.index("Custom / Unknown title"))
+            new_title = st.text_input("New slide title", placeholder="Leave blank if you do not know it yet")
+            new_prompt = st.text_area("Optional helper prompt", height=75, placeholder="What should this slide help the presenter do?")
 
-        selected_index = next((i for i, slide in enumerate(deck["slides"]) if slide["id"] == st.session_state.selected_slide_id), 0)
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Add after", use_container_width=True):
-                slide = new_slide(new_role, new_title, new_prompt)
-                deck["slides"].insert(selected_index + 1, slide)
-                queue_slide_selection(slide["id"])
-                st.rerun()
-        with col2:
-            if st.button("Add at end", use_container_width=True):
-                slide = new_slide(new_role, new_title, new_prompt)
-                deck["slides"].append(slide)
-                queue_slide_selection(slide["id"])
-                st.rerun()
+            selected_index = next((i for i, slide in enumerate(deck["slides"]) if slide["id"] == st.session_state.selected_slide_id), 0)
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Add after", use_container_width=True):
+                    slide = new_slide(new_role, new_title, new_prompt)
+                    deck["slides"].insert(selected_index + 1, slide)
+                    queue_slide_selection(slide["id"])
+                    st.rerun()
+            with col2:
+                if st.button("Add at end", use_container_width=True):
+                    slide = new_slide(new_role, new_title, new_prompt)
+                    deck["slides"].append(slide)
+                    queue_slide_selection(slide["id"])
+                    st.rerun()
 
         st.divider()
         st.subheader("GitHub archive")

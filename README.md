@@ -84,3 +84,6 @@ Update v4.0: added GitHub archive deletion controls and an optional whole-slide 
 
 
 Update v4.1: GitHub save confirmation now displays only saved file names instead of full archive paths.
+
+
+Update v4.2: moved the sidebar Add slides controls into a collapsed dropdown/expander so they stay out of the way until needed.
