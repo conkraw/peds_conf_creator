@@ -93,3 +93,6 @@ Update v4.4: fixed startup robustness by computing Bloom objective dropdown opti
 
 
 Update v4.5: refined the exported Objectives slide to match the visual reference more closely with a clean title on white background, intro line, divider, three numbered objective cards, and a bottom banner.
+
+
+Update v4.6: added a visible app-version marker in the sidebar and a visible objectives-card-layout confirmation in the Objectives editor so deployed/stale Streamlit versions are immediately obvious.

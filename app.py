@@ -24,6 +24,7 @@ import streamlit as st
 
 from deck_model import (
     APP_TITLE,
+    APP_VERSION,
     ARCHIVE_DOCX_NAME,
     ARCHIVE_PPTX_NAME,
     BLOOM_HELPER,
@@ -289,6 +290,7 @@ def sync_objectives_body(slide: Dict[str, Any]) -> None:
 def render_sidebar(deck: Dict[str, Any]) -> None:
     with st.sidebar:
         st.header("Slides")
+        st.caption(f"Running app version: {APP_VERSION}")
         slide_ids = [slide["id"] for slide in deck["slides"]]
         id_to_label = {slide["id"]: slide_nav_label(i + 1, slide) for i, slide in enumerate(deck["slides"])}
 
@@ -483,6 +485,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_objectives_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Objectives")
+    st.success("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
     ensure_objective_fields(slide)
     render_bloom_helper()
     st.caption("Choose a Bloom-style action word for each objective, then enter the explanatory sentence.")
