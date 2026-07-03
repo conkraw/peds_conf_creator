@@ -99,3 +99,6 @@ Update v4.6: added a visible app-version marker in the sidebar and a visible obj
 
 
 Update v4.7: the single slide upload control now accepts either an image (PNG/JPEG) or a PPTX. If a PPTX is uploaded, the app uses the first slide of that file and replaces the corresponding exported PowerPoint slide. Images still support the half-slide/whole-slide behavior.
+
+
+Update v4.8: added stronger PPTX-upload status messages, export-panel confirmation when a PPTX slide replacement is active, a fallback placeholder slide if replacement fails, and retained mentor DOCX notation for PPTX slide replacements.

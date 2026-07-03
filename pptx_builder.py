@@ -631,6 +631,27 @@ def _source_first_slide_part(src_files: Dict[str, bytes]) -> str:
     return "ppt/slides/slide1.xml"
 
 
+def render_uploaded_pptx_placeholder_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
+    """Temporary slide shown only if PPTX replacement fails."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_title_bar(slide, slide_output_title(deck, slide_data, index))
+    info = get_uploaded_slide_pptx(slide_data)
+    filename = info.get("filename", "uploaded slide.pptx")
+    add_section_panel(slide, 0.85, 1.50, 11.65, 3.75)
+    add_textbox(slide, "PPTX slide replacement active", 1.15, 1.85, 11.0, 0.45, 24, True, TITLE_BLUE)
+    add_textbox(
+        slide,
+        f"The exported PowerPoint should replace this placeholder with the first slide from:\n{filename}\n\nIf you see this placeholder, the uploaded PPTX could not be inserted and should be re-uploaded or simplified.",
+        1.15,
+        2.45,
+        10.95,
+        1.75,
+        17,
+        False,
+        BODY_TEXT,
+    )
+
+
 def replace_uploaded_pptx_slides(pptx_bytes: bytes, deck: Dict[str, Any]) -> bytes:
     with zipfile.ZipFile(io.BytesIO(pptx_bytes), "r") as zin:
         dest_files = {name: zin.read(name) for name in zin.namelist()}
@@ -677,7 +698,9 @@ def build_pptx(deck: Dict[str, Any]) -> bytes:
         output_index += 1
         kind = slide_data.get("slide_kind")
         role = slide_data.get("role")
-        if kind == "title" or role == "Title":
+        if uploaded_slide_pptx_bytes(slide_data):
+            render_uploaded_pptx_placeholder_slide(prs, deck, slide_data, output_index)
+        elif kind == "title" or role == "Title":
             render_title_slide(prs, deck, slide_data)
         elif kind == "objectives" or role == "Objectives":
             render_objectives_slide(prs, deck, slide_data, output_index)

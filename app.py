@@ -167,6 +167,21 @@ def uploaded_slide_pptx_bytes(slide: Dict[str, Any]) -> bytes | None:
         return None
 
 
+def count_pptx_slides(pptx_bytes: bytes | None) -> int:
+    if not pptx_bytes:
+        return 0
+    try:
+        import zipfile
+        import xml.etree.ElementTree as ET
+        from io import BytesIO
+        with zipfile.ZipFile(BytesIO(pptx_bytes), "r") as zf:
+            root = ET.fromstring(zf.read("ppt/presentation.xml"))
+        ns = {"p": "http://schemas.openxmlformats.org/presentationml/2006/main"}
+        return len(root.findall("p:sldIdLst/p:sldId", ns))
+    except Exception:
+        return 0
+
+
 def has_uploaded_visual(slide: Dict[str, Any]) -> bool:
     return visual_image_bytes(slide) is not None or uploaded_slide_pptx_bytes(slide) is not None
 
@@ -596,13 +611,16 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
             st.error(f"This file is larger than {max_mb} MB. Please compress it before uploading.")
         else:
             if is_pptx:
+                slide_count = count_pptx_slides(data)
                 slide["uploaded_slide_pptx"] = {
                     "filename": uploaded.name,
                     "content_type": uploaded.type or "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "slide_count": slide_count,
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
                 slide["visual_image"] = {}
                 slide["visual_full_slide"] = False
+                st.success(f"Stored PPTX slide replacement: {uploaded.name}. First slide will replace this slide in exports.")
             else:
                 slide["visual_image"] = {
                     "filename": uploaded.name,
@@ -610,11 +628,14 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
                 slide["uploaded_slide_pptx"] = {}
+                st.success(f"Stored image visual: {uploaded.name}.")
 
     pptx_info = get_uploaded_slide_pptx(slide)
     pptx_bytes = uploaded_slide_pptx_bytes(slide)
     if pptx_bytes:
-        st.info(f"Using uploaded PPTX slide: {pptx_info.get('filename', 'slide.pptx')}. The first slide of that PPTX will replace this slide in the exported PowerPoint.")
+        slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
+        slide_word = "slide" if slide_count == 1 else "slides"
+        st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will replace this app slide in the exported PowerPoint and be noted in the mentor DOCX.")
         if st.button("Remove uploaded file", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
             slide["uploaded_slide_pptx"] = {}
             slide["visual_full_slide"] = False
@@ -722,6 +743,14 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
         return
 
     st.markdown("### Export / archive")
+
+    pptx_replacements = []
+    for idx, slide in enumerate(deck.get("slides", []), start=1):
+        pptx_info = get_uploaded_slide_pptx(slide)
+        if pptx_info.get("data_base64"):
+            pptx_replacements.append(f"Slide {idx}: {pptx_info.get('filename', 'uploaded slide.pptx')}")
+    if pptx_replacements:
+        st.success("PPTX slide replacement active: " + "; ".join(pptx_replacements))
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
