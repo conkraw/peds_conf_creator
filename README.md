@@ -105,3 +105,6 @@ Update v4.8: added stronger PPTX-upload status messages, export-panel confirmati
 
 
 Update v4.9: added an optional presentation subtitle on the title slide and tightened PPTX slide replacement packaging so imported slide masters are registered and source notes/comments are not copied, reducing PowerPoint repair prompts.
+
+
+Update v5.0: PPTX uploads are now rendered to a full-slide PNG and inserted as a normal image instead of splicing PowerPoint XML. This is designed to avoid PowerPoint repair/read errors. Added packages.txt with libreoffice for Streamlit Cloud conversion support.

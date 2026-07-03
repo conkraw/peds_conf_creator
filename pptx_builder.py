@@ -13,8 +13,12 @@ import math
 import re
 import zipfile
 import posixpath
+import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Tuple
+from pathlib import Path
+import os
 
 from PIL import Image
 from pptx import Presentation
@@ -259,6 +263,39 @@ def uploaded_slide_pptx_bytes(slide_data: Dict[str, Any]) -> bytes | None:
         return None
     try:
         return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def render_pptx_first_slide_to_png(pptx_bytes: bytes) -> bytes | None:
+    """Render the first slide of an uploaded PPTX to PNG using LibreOffice.
+
+    This avoids directly splicing PowerPoint XML, which can trigger repair or
+    read errors in desktop PowerPoint. The rendered slide is then inserted as a
+    normal image into the exported deck.
+    """
+    if not pptx_bytes:
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_path = tmp / "uploaded_slide.pptx"
+            input_path.write_bytes(pptx_bytes)
+            env = dict(os.environ)
+            env["HOME"] = str(tmp)
+            result = subprocess.run(
+                ["libreoffice", "--headless", "--convert-to", "png", "--outdir", str(tmp), str(input_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=90,
+                env=env,
+            )
+            if result.returncode != 0:
+                return None
+            png_candidates = sorted(tmp.glob("*.png"))
+            if not png_candidates:
+                return None
+            return png_candidates[0].read_bytes()
     except Exception:
         return None
 
@@ -725,26 +762,36 @@ def _source_first_slide_part(src_files: Dict[str, bytes]) -> str:
     return "ppt/slides/slide1.xml"
 
 
-def render_uploaded_pptx_placeholder_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
-    """Temporary slide shown only if PPTX replacement fails."""
+def render_uploaded_pptx_replacement_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
+    """Render an uploaded PPTX's first slide as a full-slide image.
+
+    The key design choice is intentional: imported PPTX slides are rasterized to
+    a PNG and inserted as a normal image. This is far more reliable than XML
+    splicing and prevents desktop PowerPoint repair/read errors.
+    """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
+    pptx_bytes = uploaded_slide_pptx_bytes(slide_data)
+    image_bytes = render_pptx_first_slide_to_png(pptx_bytes or b"")
+    if image_bytes:
+        add_image_fit(slide, image_bytes, 0.0, 0.0, 13.333, 7.50)
+        return
+
     add_title_bar(slide, slide_output_title(deck, slide_data, index))
     info = get_uploaded_slide_pptx(slide_data)
     filename = info.get("filename", "uploaded slide.pptx")
     add_section_panel(slide, 0.85, 1.50, 11.65, 3.75)
-    add_textbox(slide, "PPTX slide replacement active", 1.15, 1.85, 11.0, 0.45, 24, True, TITLE_BLUE)
+    add_textbox(slide, "PPTX slide could not be rendered", 1.15, 1.85, 11.0, 0.45, 24, True, TITLE_BLUE)
     add_textbox(
         slide,
-        f"The exported PowerPoint should replace this placeholder with the first slide from:\n{filename}\n\nIf you see this placeholder, the uploaded PPTX could not be inserted and should be re-uploaded or simplified.",
+        f"The uploaded PPTX was stored, but the app could not render its first slide as an image.\n\nFile: {filename}\n\nOn Streamlit Cloud, make sure packages.txt includes libreoffice. You can also export the slide as PNG and upload that image.",
         1.15,
         2.45,
         10.95,
-        1.75,
+        1.95,
         17,
         False,
         BODY_TEXT,
     )
-
 
 def replace_uploaded_pptx_slides(pptx_bytes: bytes, deck: Dict[str, Any]) -> bytes:
     with zipfile.ZipFile(io.BytesIO(pptx_bytes), "r") as zin:
@@ -794,7 +841,7 @@ def build_pptx(deck: Dict[str, Any]) -> bytes:
         kind = slide_data.get("slide_kind")
         role = slide_data.get("role")
         if uploaded_slide_pptx_bytes(slide_data):
-            render_uploaded_pptx_placeholder_slide(prs, deck, slide_data, output_index)
+            render_uploaded_pptx_replacement_slide(prs, deck, slide_data, output_index)
         elif kind == "title" or role == "Title":
             render_title_slide(prs, deck, slide_data)
         elif kind == "objectives" or role == "Objectives":
@@ -808,8 +855,6 @@ def build_pptx(deck: Dict[str, Any]) -> bytes:
     buffer = io.BytesIO()
     prs.save(buffer)
     pptx_bytes = buffer.getvalue()
-    if any(uploaded_slide_pptx_bytes(slide_data) for slide_data in deck.get("slides", [])):
-        pptx_bytes = replace_uploaded_pptx_slides(pptx_bytes, deck)
     return add_speaker_notes_to_pptx(pptx_bytes, speaker_notes)
 
 

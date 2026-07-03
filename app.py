@@ -595,14 +595,14 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
     """Store one optional uploaded asset per slide: image or PPTX slide."""
-    st.caption("Optional: upload a PNG/JPEG image or a PPTX file. Images can appear beside text or fill the slide. A PPTX upload uses the first slide of that file and replaces this slide in the exported PowerPoint.")
+    st.caption("Optional: upload a PNG/JPEG image or a PPTX file. Images can appear beside text or fill the slide. A PPTX upload is rendered as a full-slide image so PowerPoint does not need to repair the export.")
     nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
     nonce = nonce_map.get(slide["id"], 0)
     uploaded = st.file_uploader(
         "Upload image or PPTX slide",
         type=["png", "jpg", "jpeg", "pptx"],
         key=f"widget__{slide['id']}__visual_file__{nonce}",
-        help="Use an image for a figure, screenshot, or diagram. Use a PPTX when you already built a polished slide and want that slide inserted instead of this one.",
+        help="Use an image for a figure, screenshot, or diagram. Use a PPTX when you already built a polished slide and want the first slide rendered into this app slide.",
     )
     if uploaded is not None:
         data = uploaded.getvalue()
@@ -621,7 +621,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                 }
                 slide["visual_image"] = {}
                 slide["visual_full_slide"] = False
-                st.success(f"Stored PPTX slide replacement: {uploaded.name}. First slide will replace this slide in exports.")
+                st.success(f"Stored PPTX slide replacement: {uploaded.name}. First slide will be rendered as a full-slide image in exports.")
             else:
                 slide["visual_image"] = {
                     "filename": uploaded.name,
@@ -636,7 +636,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
     if pptx_bytes:
         slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
         slide_word = "slide" if slide_count == 1 else "slides"
-        st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will replace this app slide in the exported PowerPoint and be noted in the mentor DOCX.")
+        st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will render as a full-slide image in the exported PowerPoint and appear in the mentor DOCX when LibreOffice is available.")
         if st.button("Remove uploaded file", key=f"widget__{slide['id']}__remove_visual", use_container_width=True):
             slide["uploaded_slide_pptx"] = {}
             slide["visual_full_slide"] = False

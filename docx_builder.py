@@ -7,7 +7,11 @@ critiques; mentors can use Word comments or Track Changes in the generated DOCX.
 from __future__ import annotations
 
 import base64
+import os
+import subprocess
+import tempfile
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, List
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -71,6 +75,46 @@ def _uploaded_slide_pptx_filename(slide: Dict[str, Any]) -> str:
     if not isinstance(pptx, dict):
         return ""
     return _safe_text(pptx.get("filename"))
+
+
+def _uploaded_slide_pptx_bytes(slide: Dict[str, Any]) -> bytes | None:
+    pptx = slide.get("uploaded_slide_pptx", {})
+    if not isinstance(pptx, dict):
+        return None
+    encoded = pptx.get("data_base64")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def _render_pptx_first_slide_to_png(pptx_bytes: bytes) -> bytes | None:
+    if not pptx_bytes:
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_path = tmp / "uploaded_slide.pptx"
+            input_path.write_bytes(pptx_bytes)
+            env = dict(os.environ)
+            env["HOME"] = str(tmp)
+            result = subprocess.run(
+                ["libreoffice", "--headless", "--convert-to", "png", "--outdir", str(tmp), str(input_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=90,
+                env=env,
+            )
+            if result.returncode != 0:
+                return None
+            png_candidates = sorted(tmp.glob("*.png"))
+            if not png_candidates:
+                return None
+            return png_candidates[0].read_bytes()
+    except Exception:
+        return None
 
 
 def _body_width_inches(doc: Document) -> float:
@@ -322,7 +366,30 @@ def _fit_image_dimensions(image_bytes: bytes, max_width: float = 4.85, max_heigh
 def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) -> None:
     pptx_name = _uploaded_slide_pptx_filename(slide)
     if pptx_name:
-        _add_field_row(table, "Uploaded visual", f"PPTX slide replacement: {pptx_name} (the first slide of this PPTX replaces the exported PowerPoint slide)", label_fill)
+        preview_bytes = _render_pptx_first_slide_to_png(_uploaded_slide_pptx_bytes(slide) or b"")
+        if not preview_bytes:
+            _add_field_row(table, "Uploaded visual", "PPTX slide replacement uploaded. Preview unavailable because the app could not render the PPTX slide.", label_fill)
+            return
+
+        row = table.add_row()
+        label_cell, value_cell = row.cells
+        _shade_cell(label_cell, label_fill)
+        _shade_cell(value_cell, WHITE)
+        _set_cell_borders(label_cell)
+        _set_cell_borders(value_cell)
+        _set_cell_margins(label_cell)
+        _set_cell_margins(value_cell)
+        _write_cell_text(label_cell, "Uploaded visual", font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
+        _clear_cell(value_cell)
+        try:
+            image_width, image_height = _fit_image_dimensions(preview_bytes, max_width=4.7, max_height=2.8)
+            image_p = value_cell.paragraphs[0]
+            image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            image_p.paragraph_format.space_after = Pt(0)
+            image_run = image_p.add_run()
+            image_run.add_picture(BytesIO(preview_bytes), width=Inches(image_width), height=Inches(image_height))
+        except Exception:
+            value_cell.paragraphs[0].add_run("[PPTX slide replacement uploaded. Preview unavailable.]")
         return
 
     image_bytes = _visual_image_bytes(slide)
