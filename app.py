@@ -26,7 +26,7 @@ from deck_model import (
     APP_TITLE,
     APP_VERSION,
     ARCHIVE_DOCX_NAME,
-    ARCHIVE__NAME,
+    ARCHIVE_PPTX_NAME,
     BLOOM_HELPER,
     OBJECTIVE_EXAMPLES,
     SLIDE_ROLES,
@@ -738,7 +738,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
     if pptx_bytes:
         slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
         slide_word = "slide" if slide_count == 1 else "slides"
-        st.success(f"PPTX replacement activated: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}).")
+        st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
         preview_bytes = ensure_uploaded_slide_preview(slide)
         if preview_bytes:
             st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", width=420)
