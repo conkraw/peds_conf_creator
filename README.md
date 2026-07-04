@@ -166,3 +166,6 @@ Update v5.19: redesigned the mentor review to match the Journal Club text-review
 Update v5.20:
 - Title, Disclosures, and Objectives are automatically kept in that order for the sidebar, PowerPoint export, and mentor DOCX—including older GitHub drafts.
 - Add slides and GitHub archive are now opened and closed with full-width sidebar buttons instead of expander dropdowns.
+
+
+Update v5.21: persistent green success alerts are disabled by default through SHOW_SUCCESS_ALERTS=False. Archive actions use brief toasts, successful readiness checks are silent, and failed readiness checks show a single error with an actionable issue/location list.

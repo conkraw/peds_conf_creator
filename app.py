@@ -70,6 +70,21 @@ def objective_verb_options() -> List[str]:
 
 OBJECTIVE_VERB_OPTIONS = objective_verb_options()
 
+# Persistent green success alerts are intentionally disabled to keep the app
+# visually quiet. Set this to True when troubleshooting or during development.
+SHOW_SUCCESS_ALERTS = False
+
+# User-triggered archive actions still receive a brief, non-persistent toast.
+SHOW_ACTION_TOASTS = True
+
+
+def success_notice(message: str, *, action: bool = False) -> None:
+    """Show optional success feedback without leaving persistent green boxes."""
+    if SHOW_SUCCESS_ALERTS:
+        st.success(message)
+    elif action and SHOW_ACTION_TOASTS:
+        st.toast(message, icon="✅")
+
 
 # -----------------------------------------------------------------------------
 # Utility helpers
@@ -235,26 +250,63 @@ def slide_nav_label(index: int, slide: Dict[str, Any]) -> str:
     return f"{index}. {short_label(role, 16)} — {short_label(title, 30)}"
 
 
-def validation_messages(deck: Dict[str, Any]) -> List[str]:
-    messages: List[str] = []
+def validation_messages(deck: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Return actionable readiness issues with a clear location."""
+    issues: List[Dict[str, str]] = []
     meta = deck.get("metadata", {})
+
     if not str(meta.get("presentation_title", "")).strip():
-        messages.append("Presentation title is blank.")
+        issues.append({
+            "location": "Presentation identity → Presentation title",
+            "message": "The presentation title is blank.",
+            "fix": "Open the Title slide and enter a presentation title.",
+            "slide_id": deck.get("slides", [{}])[0].get("id", ""),
+        })
+
     if not str(meta.get("presenter", "")).strip():
-        messages.append("Presenter is blank.")
+        issues.append({
+            "location": "Presentation identity → Presenter",
+            "message": "The presenter name is blank.",
+            "fix": "Open the Title slide and enter the presenter name.",
+            "slide_id": deck.get("slides", [{}])[0].get("id", ""),
+        })
+
     for idx, slide in enumerate(deck.get("slides", []), start=1):
         role = slide.get("role", "Slide")
+        title = str(slide.get("title") or "Untitled slide")
+        slide_id = str(slide.get("id") or "")
+        slide_location = f"Slide {idx}: {title}"
+
         if role == "Objectives":
             objective_count = len(split_nonempty_lines(slide.get("body", "")))
             if objective_count < 1:
-                messages.append(f"Slide {idx} objectives are blank.")
+                issues.append({
+                    "location": f"{slide_location} → Objectives",
+                    "message": "No objectives are entered.",
+                    "fix": "Add at least one Bloom-style objective.",
+                    "slide_id": slide_id,
+                })
         elif role == "Take-home":
-            takehome_count = len([1 for i in range(1, 6) if str(slide.get(f"takehome_point_{i}", "")).strip()])
+            takehome_count = len([
+                1 for i in range(1, 6)
+                if str(slide.get(f"takehome_point_{i}", "")).strip()
+            ])
             if takehome_count < 1 and not has_uploaded_visual(slide):
-                messages.append(f"Slide {idx} take-home points are blank.")
+                issues.append({
+                    "location": f"{slide_location} → Take-home points",
+                    "message": "No take-home points or visual are entered.",
+                    "fix": "Add at least one take-home point or upload a visual.",
+                    "slide_id": slide_id,
+                })
         elif role != "Title" and not str(slide.get("body", "")).strip() and not has_uploaded_visual(slide):
-            messages.append(f"Slide {idx} has no main slide text or uploaded visual.")
-    return messages
+            issues.append({
+                "location": f"{slide_location} → Slide text / visual",
+                "message": "The slide has no main text or uploaded visual.",
+                "fix": "Enter slide text, upload an image/PPTX slide, or delete the unused slide.",
+                "slide_id": slide_id,
+            })
+
+    return issues
 
 
 # -----------------------------------------------------------------------------
@@ -460,10 +512,8 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
 
         if st.session_state.show_github_archive:
             with st.container(border=True):
-                if github_is_configured():
-                    st.success(github_status_message())
-                else:
-                    st.info(github_status_message())
+                if not github_is_configured():
+                    st.warning(github_status_message())
 
                 search_text = st.text_input("Search archive", placeholder="presenter, title, or date")
                 if st.button("Find saved presentations", use_container_width=True):
@@ -499,7 +549,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                             st.session_state.archive_path = payload.get("archive_path", selected_path)
                             queue_slide_selection(st.session_state.deck["slides"][0]["id"])
                             clear_widget_state()
-                            st.success("Loaded from GitHub.")
+                            success_notice("Loaded from GitHub.", action=True)
                             st.rerun()
                         except GitHubStorageError as exc:
                             st.error(str(exc))
@@ -526,7 +576,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                                 st.session_state.archive_results = [row for row in results if row.get("path") != selected_path]
                                 if st.session_state.get("archive_path", "").strip().strip("/") == selected_path.strip().strip("/"):
                                     st.session_state.archive_path = ""
-                                st.success(f"Deleted {deleted_count} file(s) from GitHub.")
+                                success_notice(f"Deleted {deleted_count} file(s) from GitHub.", action=True)
                                 st.rerun()
                             except GitHubStorageError as exc:
                                 st.error(str(exc))
@@ -605,7 +655,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_objectives_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Objectives")
-    st.success("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
+    success_notice("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
     ensure_objective_fields(slide)
     render_bloom_helper()
     st.caption("Choose a Bloom-style action word for each objective, then enter the explanatory sentence.")
@@ -739,7 +789,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                 slide["uploaded_slide_preview_image"] = {}
                 preview_bytes = ensure_uploaded_slide_preview(slide)
                 if preview_bytes:
-                    st.success(f"Stored PPTX slide replacement: {uploaded.name}. First slide will be imported as editable PowerPoint objects in exports, and a preview image was generated.")
+                    success_notice(f"Stored PPTX slide replacement: {uploaded.name}. First slide will be imported as editable PowerPoint objects in exports, and a preview image was generated.")
                 else:
                     st.warning(f"Stored PPTX slide replacement: {uploaded.name}. The slide will still export as editable PowerPoint objects, but preview generation was not available right now.")
             else:
@@ -750,14 +800,14 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                 }
                 slide["uploaded_slide_pptx"] = {}
                 slide["uploaded_slide_preview_image"] = {}
-                st.success(f"Stored image visual: {uploaded.name}.")
+                success_notice(f"Stored image visual: {uploaded.name}.")
 
     pptx_info = get_uploaded_slide_pptx(slide)
     pptx_bytes = uploaded_slide_pptx_bytes(slide)
     if pptx_bytes:
         slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
         slide_word = "slide" if slide_count == 1 else "slides"
-        st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
+        success_notice(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
         preview_bytes = ensure_uploaded_slide_preview(slide)
         if preview_bytes:
             st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", width=420)
@@ -902,14 +952,14 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
         if pptx_info.get("data_base64"):
             pptx_replacements.append(f"Slide {idx}: {pptx_info.get('filename', 'uploaded slide.pptx')}")
     if pptx_replacements:
-        st.success("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
+        success_notice("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
         st.caption("Journal-club-style review: compact PowerPoint previews, editable on-slide wording, full speaker notes, and mentor comment boxes in a portrait table format.")
         complete_mentor_doc = mentor_docx_contains_complete_review_fields(mentor_docx_bytes)
         if complete_mentor_doc:
-            st.success(f"Compact table-based mentor review active ({APP_VERSION}): PowerPoint previews, editable wording, full speaker notes, and feedback areas are included.")
+            success_notice(f"Compact table-based mentor review active ({APP_VERSION}): PowerPoint previews, editable wording, full speaker notes, and feedback areas are included.")
         else:
             st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
         mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")
@@ -942,7 +992,7 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
                 if results:
                     # Path looks like base/date_presenter_title/file.ext; archive folder is the parent.
                     st.session_state.archive_path = results[0].path.rsplit("/", 1)[0]
-                st.success("Saved to GitHub archive.")
+                success_notice("Saved to GitHub archive.", action=True)
                 saved_file_names = [result.path.rsplit("/", 1)[-1] for result in results if result.html_url]
                 if saved_file_names:
                     st.caption("Saved files: " + ", ".join(saved_file_names))
@@ -968,11 +1018,15 @@ def main() -> None:
 
     problems = validation_messages(deck)
     if problems:
-        with st.expander(f"Readiness check: {len(problems)} item(s) to review", expanded=False):
-            for problem in problems:
-                st.write(f"• {problem}")
+        st.error(f"Readiness check found {len(problems)} issue(s) that may affect the export.")
+        with st.expander("Show issues and locations", expanded=False):
+            for number, problem in enumerate(problems, start=1):
+                st.markdown(f"**{number}. {problem['location']}**")
+                st.write(problem["message"])
+                st.caption(f"Suggested fix: {problem['fix']}")
     else:
-        st.success("Readiness check passed. The presentation has the core fields needed for export.")
+        # A passing readiness check is intentionally silent.
+        success_notice("Readiness check passed. The presentation has the core fields needed for export.")
 
     editor_col, export_col = st.columns([2.1, 0.85], gap="large")
     with editor_col:
