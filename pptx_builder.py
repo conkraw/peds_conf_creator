@@ -121,27 +121,63 @@ def add_title_bar(slide, title: str, subtitle: str = "") -> None:
         add_textbox(slide, subtitle, 0.55, 0.78, 12.2, 0.35, 11, False, GRAY_TEXT)
 
 
+def estimate_body_panel_height(lines: List[str], width_inches: float, font_size: int, max_height: float) -> float:
+    """Estimate a compact panel height that grows with wrapped bullet text."""
+    if not lines:
+        return min(max_height, 1.05)
+
+    chars_per_line = max(20, int(width_inches * (96 / max(font_size, 1))))
+    wrapped_lines = 0
+    for line in lines:
+        clean = _safe_text(line).strip()
+        wrapped_lines += max(1, math.ceil(len(clean) / chars_per_line))
+
+    line_height = (font_size / 72.0) * 1.22
+    spacing = max(0, len(lines) - 1) * 0.08
+    estimated = 0.34 + wrapped_lines * line_height + spacing
+    return max(1.05, min(max_height, estimated))
+
+
 def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: float, font_size: int = 22) -> None:
-    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    """Render slide text inside a subtle colored panel instead of floating bullets."""
+    content_lines = list(lines) if lines else ["Add slide content here."]
+    panel_h = estimate_body_panel_height(content_lines, w, font_size, h)
+
+    panel = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
+        Inches(x),
+        Inches(y),
+        Inches(w),
+        Inches(panel_h),
+    )
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = _rgb(LIGHT_BLUE)
+    panel.line.color.rgb = _rgb(BORDER_BLUE)
+    panel.line.width = Pt(1.0)
+
+    box = slide.shapes.add_textbox(
+        Inches(x + 0.12),
+        Inches(y + 0.08),
+        Inches(max(0.3, w - 0.24)),
+        Inches(max(0.35, panel_h - 0.16)),
+    )
     frame = box.text_frame
     frame.word_wrap = True
     frame.clear()
-    frame.margin_left = Inches(0.12)
-    frame.margin_right = Inches(0.08)
+    frame.margin_left = Inches(0.10)
+    frame.margin_right = Inches(0.10)
     frame.margin_top = Inches(0.06)
     frame.margin_bottom = Inches(0.06)
+    frame.vertical_anchor = MSO_ANCHOR.MIDDLE
 
-    if not lines:
-        lines = ["Add slide content here."]
-
-    for idx, line in enumerate(lines):
-        p = frame.paragraphs[0] if idx == 0 else frame.add_paragraph()
-        p.text = line if line.startswith(("•", "-", "1.", "2.", "3.", "A.", "B.")) else f"• {line}"
-        p.level = 0
-        p.font.name = "Aptos"
-        p.font.size = Pt(font_size)
-        p.font.color.rgb = _rgb(BODY_TEXT)
-        p.space_after = Pt(7)
+    for idx, line in enumerate(content_lines):
+        paragraph = frame.paragraphs[0] if idx == 0 else frame.add_paragraph()
+        paragraph.text = line if line.startswith(("•", "-", "1.", "2.", "3.", "A.", "B.")) else f"• {line}"
+        paragraph.level = 0
+        paragraph.font.name = "Aptos"
+        paragraph.font.size = Pt(font_size)
+        paragraph.font.color.rgb = _rgb(BODY_TEXT)
+        paragraph.space_after = Pt(7)
 
 
 def add_section_panel(slide, x: float, y: float, w: float, h: float):

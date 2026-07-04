@@ -835,7 +835,7 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         st.caption(f"Blue section box active: {section_box_label.strip()}")
     else:
         st.caption("No section box will be added unless this field contains text.")
-    body = widget_text(slide, "body", "Slide text", height=190, multiline=True, help_text="Use one idea per line. Short lines work best on slides.")
+    body = widget_text(slide, "body", "Slide text", height=190, multiline=True, help_text="Use one idea per line. Short lines work best on slides. When text is entered, it exports inside a lightly colored panel so the bullets feel visually connected.")
     st.caption(f"{count_words(body)} words. For readability, try to keep most slides under ~45 words.")
 
     st.markdown("#### Optional slide visual")

@@ -143,3 +143,6 @@ Update v5.11: new presentation scaffolds now place Disclosures immediately after
 
 
 Update v5.12: increased all speaker-note text areas in the app. Standard slides use a 260 px note box; title, objectives, disclosures, and take-home slides use a 220 px note box.
+
+
+Update v5.13: slide text on standard content and disclosure slides now appears inside a compact light-blue rounded panel with a subtle border. The panel automatically grows to fit the bullet text instead of leaving bullets floating on the slide.
