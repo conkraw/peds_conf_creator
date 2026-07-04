@@ -172,7 +172,8 @@ def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: flo
 
     for idx, line in enumerate(content_lines):
         paragraph = frame.paragraphs[0] if idx == 0 else frame.add_paragraph()
-        paragraph.text = line if line.startswith(("•", "-", "1.", "2.", "3.", "A.", "B.")) else f"• {line}"
+        clean_line = re.sub(r"^\s*[••\-–—]\s*", "", _safe_text(line)).strip()
+        paragraph.text = clean_line
         paragraph.level = 0
         paragraph.font.name = "Aptos"
         paragraph.font.size = Pt(font_size)

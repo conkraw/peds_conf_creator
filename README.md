@@ -146,3 +146,6 @@ Update v5.12: increased all speaker-note text areas in the app. Standard slides 
 
 
 Update v5.13: slide text on standard content and disclosure slides now appears inside a compact light-blue rounded panel with a subtle border. The panel automatically grows to fit the bullet text instead of leaving bullets floating on the slide.
+
+
+Update v5.15: slide text panels no longer automatically add bullet dots. Existing leading bullet/dash characters are stripped so statements appear as clean lines inside the colored box.
