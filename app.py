@@ -887,10 +887,10 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
-        st.caption("Streamlined review: each page shows the actual PowerPoint slide, editable slide wording, speaker notes, and a mentor feedback area.")
+        st.caption("Journal-club-style review: compact PowerPoint previews, editable on-slide wording, full speaker notes, and mentor comment boxes in a portrait table format.")
         complete_mentor_doc = mentor_docx_contains_complete_review_fields(mentor_docx_bytes)
         if complete_mentor_doc:
-            st.success(f"Streamlined mentor review active ({APP_VERSION}): PowerPoint previews, editable wording, images, speaker notes, and feedback areas are included.")
+            st.success(f"Compact table-based mentor review active ({APP_VERSION}): PowerPoint previews, editable wording, full speaker notes, and feedback areas are included.")
         else:
             st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
         mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")

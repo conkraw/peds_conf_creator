@@ -158,3 +158,6 @@ Update v5.17: disclosure slide text is now centered inside its content panel, wi
 
 
 Update v5.18: redesigned the mentor review as a compact portrait table document. Slide previews are smaller, editable slide wording and speaker notes appear beside the preview, mentor feedback remains editable, and slides flow continuously instead of forcing one or two pages per slide.
+
+
+Update v5.19: redesigned the mentor review to match the Journal Club text-review style: blue slide headers, gray field labels, compact portrait tables, actual PowerPoint previews, editable on-slide wording, full speaker notes, and mentor comment boxes.
