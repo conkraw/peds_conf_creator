@@ -415,8 +415,8 @@ def _add_field_row(table, label: str, value: str, label_fill: str = HEADER_GRAY)
     _write_cell_text(value_cell, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_MUTED if not value else TEXT_DARK)
 
 
-def _fit_image_dimensions(image_bytes: bytes, max_width: float = 3.55, max_height: float = 1.60) -> tuple[float, float]:
-    """Return compact image dimensions in inches for the mentor review preview cell."""
+def _fit_image_dimensions(image_bytes: bytes, max_width: float = 4.15, max_height: float = 1.90) -> tuple[float, float]:
+    """Return moderately sized image dimensions in inches for the mentor review preview cell."""
     try:
         with Image.open(BytesIO(image_bytes)) as img:
             px_w, px_h = img.size

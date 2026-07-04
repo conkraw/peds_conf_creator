@@ -134,3 +134,6 @@ Update v5.8: PPTX uploads now generate a preview image for the app and the mento
 
 
 Update v5.9: reduced uploaded image and PPTX preview sizes in the app and mentor DOCX. Source downloads and editable PPTX replacement behavior are unchanged.
+
+
+Update v5.10: increased uploaded image and PPTX preview sizes slightly in both the app and mentor DOCX while keeping them compact.
