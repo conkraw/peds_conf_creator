@@ -152,3 +152,6 @@ Update v5.15: slide text panels no longer automatically add bullet dots. Existin
 
 
 Update v5.16: redesigned the mentor DOCX into a streamlined review packet. It now begins with a compact presentation overview, then shows the actual rendered PowerPoint slide, editable on-slide wording, speaker notes, and a mentor feedback box for every slide. App-only implementation metadata and the Bloom reference table were removed from the main review flow.
+
+
+Update v5.17: disclosure slide text is now centered inside its content panel, without left alignment or bullets. This applies only to the Disclosures slide.

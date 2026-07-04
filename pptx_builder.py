@@ -181,6 +181,43 @@ def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: flo
         paragraph.space_after = Pt(7)
 
 
+def add_centered_statement_panel(slide, text: str, x: float, y: float, w: float, h: float, font_size: int = 23) -> None:
+    """Render a single statement centered inside a colored panel. Used for disclosures."""
+    clean_text = re.sub(r"^\s*[••\-–—]\s*", "", _safe_text(text)).strip() or "I have no relevant financial or non-financial disclosures."
+    panel = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
+        Inches(x),
+        Inches(y),
+        Inches(w),
+        Inches(h),
+    )
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = _rgb(LIGHT_BLUE)
+    panel.line.color.rgb = _rgb(BORDER_BLUE)
+    panel.line.width = Pt(1.0)
+
+    box = slide.shapes.add_textbox(
+        Inches(x + 0.25),
+        Inches(y + 0.08),
+        Inches(max(0.3, w - 0.50)),
+        Inches(max(0.35, h - 0.16)),
+    )
+    frame = box.text_frame
+    frame.word_wrap = True
+    frame.clear()
+    frame.margin_left = Inches(0.06)
+    frame.margin_right = Inches(0.06)
+    frame.margin_top = Inches(0.06)
+    frame.margin_bottom = Inches(0.06)
+    frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+    paragraph = frame.paragraphs[0]
+    paragraph.alignment = PP_ALIGN.CENTER
+    paragraph.text = clean_text
+    paragraph.font.name = "Aptos"
+    paragraph.font.size = Pt(font_size)
+    paragraph.font.color.rgb = _rgb(BODY_TEXT)
+
+
 def add_section_panel(slide, x: float, y: float, w: float, h: float):
     panel = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
     panel.fill.solid()
@@ -646,7 +683,8 @@ def render_disclosures_slide(prs: Presentation, deck: Dict[str, Any], slide_data
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_title_bar(slide, slide_output_title(deck, slide_data, index))
     disclosures = split_nonempty_lines(slide_data.get("body", "")) or ["I have no relevant financial or non-financial disclosures."]
-    add_body_lines(slide, disclosures, 0.95, 1.55, 11.0, 4.2, 23)
+    disclosure_statement = " ".join(disclosures)
+    add_centered_statement_panel(slide, disclosure_statement, 1.05, 1.58, 10.75, 1.05, 23)
 
 
 def render_standard_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict[str, Any], index: int) -> None:
