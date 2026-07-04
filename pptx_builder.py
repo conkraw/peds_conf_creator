@@ -39,11 +39,11 @@ ET.register_namespace("r", R_NS)
 ET.register_namespace("a", A_NS)
 
 TITLE_BLUE = (31, 78, 121)
-LIGHT_BLUE = (234, 242, 250)
+LIGHT_BLUE = (227, 238, 249)
 PALE_BLUE = (248, 251, 254)
 GRAY_TEXT = (80, 80, 80)
 BODY_TEXT = (35, 35, 35)
-BORDER_BLUE = (185, 205, 225)
+BORDER_BLUE = (155, 184, 214)
 WHITE = (255, 255, 255)
 
 
@@ -122,24 +122,24 @@ def add_title_bar(slide, title: str, subtitle: str = "") -> None:
 
 
 def estimate_body_panel_height(lines: List[str], width_inches: float, font_size: int, max_height: float) -> float:
-    """Estimate a compact panel height that grows with wrapped bullet text."""
+    """Estimate a visible panel height that grows with wrapped bullet text."""
     if not lines:
-        return min(max_height, 1.05)
+        return min(max_height, 1.30)
 
-    chars_per_line = max(20, int(width_inches * (96 / max(font_size, 1))))
+    chars_per_line = max(18, int(width_inches * (92 / max(font_size, 1))))
     wrapped_lines = 0
     for line in lines:
         clean = _safe_text(line).strip()
         wrapped_lines += max(1, math.ceil(len(clean) / chars_per_line))
 
-    line_height = (font_size / 72.0) * 1.22
-    spacing = max(0, len(lines) - 1) * 0.08
-    estimated = 0.34 + wrapped_lines * line_height + spacing
-    return max(1.05, min(max_height, estimated))
+    line_height = (font_size / 72.0) * 1.24
+    spacing = max(0, len(lines) - 1) * 0.11
+    estimated = 0.55 + wrapped_lines * line_height + spacing
+    return max(1.35, min(max_height, estimated))
 
 
 def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: float, font_size: int = 22) -> None:
-    """Render slide text inside a subtle colored panel instead of floating bullets."""
+    """Render slide text inside an obvious colored content panel."""
     content_lines = list(lines) if lines else ["Add slide content here."]
     panel_h = estimate_body_panel_height(content_lines, w, font_size, h)
 
@@ -153,22 +153,34 @@ def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: flo
     panel.fill.solid()
     panel.fill.fore_color.rgb = _rgb(LIGHT_BLUE)
     panel.line.color.rgb = _rgb(BORDER_BLUE)
-    panel.line.width = Pt(1.0)
+    panel.line.width = Pt(1.5)
+
+    # Slight inner top band makes the panel more visually obvious.
+    accent = slide.shapes.add_shape(
+        MSO_AUTO_SHAPE_TYPE.RECTANGLE,
+        Inches(x + 0.04),
+        Inches(y + 0.04),
+        Inches(max(0.2, w - 0.08)),
+        Inches(0.10),
+    )
+    accent.fill.solid()
+    accent.fill.fore_color.rgb = _rgb((209, 225, 242))
+    accent.line.color.rgb = _rgb((209, 225, 242))
 
     box = slide.shapes.add_textbox(
-        Inches(x + 0.12),
-        Inches(y + 0.08),
-        Inches(max(0.3, w - 0.24)),
-        Inches(max(0.35, panel_h - 0.16)),
+        Inches(x + 0.16),
+        Inches(y + 0.16),
+        Inches(max(0.3, w - 0.32)),
+        Inches(max(0.45, panel_h - 0.28)),
     )
     frame = box.text_frame
     frame.word_wrap = True
     frame.clear()
-    frame.margin_left = Inches(0.10)
+    frame.margin_left = Inches(0.12)
     frame.margin_right = Inches(0.10)
-    frame.margin_top = Inches(0.06)
-    frame.margin_bottom = Inches(0.06)
-    frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+    frame.margin_top = Inches(0.08)
+    frame.margin_bottom = Inches(0.08)
+    frame.vertical_anchor = MSO_ANCHOR.TOP
 
     for idx, line in enumerate(content_lines):
         paragraph = frame.paragraphs[0] if idx == 0 else frame.add_paragraph()
@@ -177,7 +189,7 @@ def add_body_lines(slide, lines: List[str], x: float, y: float, w: float, h: flo
         paragraph.font.name = "Aptos"
         paragraph.font.size = Pt(font_size)
         paragraph.font.color.rgb = _rgb(BODY_TEXT)
-        paragraph.space_after = Pt(7)
+        paragraph.space_after = Pt(8)
 
 
 def add_section_panel(slide, x: float, y: float, w: float, h: float):
