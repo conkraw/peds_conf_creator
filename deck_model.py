@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.04-v5.19"
+APP_VERSION = "2026.07.04-v5.20"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -161,6 +161,49 @@ def disclosures_slide() -> Dict[str, Any]:
     return slide
 
 
+def ensure_core_slide_order(deck: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep Title, Disclosures, and Objectives in the intended fixed order.
+
+    Older GitHub drafts may have Objectives before Disclosures. This migrates
+    those decks without changing the relative order of all other slides.
+    """
+    if not isinstance(deck, dict):
+        return deck
+    slides = deck.get("slides")
+    if not isinstance(slides, list) or not slides:
+        return deck
+
+    preferred = [
+        ("Title", "title"),
+        ("Disclosures", "disclosures"),
+        ("Objectives", "objectives"),
+    ]
+    used_ids = set()
+    ordered: List[Dict[str, Any]] = []
+
+    for role_name, kind_name in preferred:
+        match = next(
+            (
+                slide
+                for slide in slides
+                if isinstance(slide, dict)
+                and id(slide) not in used_ids
+                and (
+                    str(slide.get("role", "")).strip() == role_name
+                    or str(slide.get("slide_kind", "")).strip() == kind_name
+                )
+            ),
+            None,
+        )
+        if match is not None:
+            ordered.append(match)
+            used_ids.add(id(match))
+
+    ordered.extend(slide for slide in slides if id(slide) not in used_ids)
+    deck["slides"] = ordered
+    return deck
+
+
 def starter_slides_for_talk_type(talk_type: str) -> List[Dict[str, Any]]:
     """Return a recommended story scaffold for the selected talk type."""
     base = [title_slide(), disclosures_slide(), objectives_slide()]
@@ -216,7 +259,7 @@ def default_deck(talk_type: str = "Educational Topic") -> Dict[str, Any]:
     today = dt.date.today().isoformat()
     if talk_type not in TALK_TYPES:
         talk_type = "Educational Topic"
-    return {
+    deck = {
         "app_version": APP_VERSION,
         "metadata": {
             "presentation_title": "",
@@ -231,6 +274,7 @@ def default_deck(talk_type: str = "Educational Topic") -> Dict[str, Any]:
         },
         "slides": starter_slides_for_talk_type(talk_type),
     }
+    return ensure_core_slide_order(deck)
 
 
 # -----------------------------------------------------------------------------
@@ -338,4 +382,4 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
             normalized_slides.append(slide)
         if normalized_slides:
             base["slides"] = normalized_slides
-    return base
+    return ensure_core_slide_order(base)

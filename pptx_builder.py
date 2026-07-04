@@ -25,7 +25,7 @@ from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.util import Inches, Pt
 
-from deck_model import OBJECTIVE_EXAMPLES, slide_output_title, split_nonempty_lines
+from deck_model import OBJECTIVE_EXAMPLES, ensure_core_slide_order, slide_output_title, split_nonempty_lines
 
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
@@ -1136,6 +1136,7 @@ def replace_uploaded_pptx_slides(pptx_bytes: bytes, deck: Dict[str, Any]) -> byt
 
 
 def build_pptx(deck: Dict[str, Any]) -> bytes:
+    ensure_core_slide_order(deck)
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)

@@ -161,3 +161,8 @@ Update v5.18: redesigned the mentor review as a compact portrait table document.
 
 
 Update v5.19: redesigned the mentor review to match the Journal Club text-review style: blue slide headers, gray field labels, compact portrait tables, actual PowerPoint previews, editable on-slide wording, full speaker notes, and mentor comment boxes.
+
+
+Update v5.20:
+- Title, Disclosures, and Objectives are automatically kept in that order for the sidebar, PowerPoint export, and mentor DOCX—including older GitHub drafts.
+- Add slides and GitHub archive are now opened and closed with full-width sidebar buttons instead of expander dropdowns.

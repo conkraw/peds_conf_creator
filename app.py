@@ -32,6 +32,7 @@ from deck_model import (
     SLIDE_ROLES,
     TALK_TYPES,
     default_deck,
+    ensure_core_slide_order,
     identity_subtitle,
     identity_title,
     new_slide,
@@ -88,6 +89,12 @@ def clear_widget_state() -> None:
 def initialize_state() -> None:
     if "deck" not in st.session_state:
         st.session_state.deck = default_deck()
+    ensure_core_slide_order(st.session_state.deck)
+    st.session_state.deck["app_version"] = APP_VERSION
+    if "show_add_slides" not in st.session_state:
+        st.session_state.show_add_slides = False
+    if "show_github_archive" not in st.session_state:
+        st.session_state.show_github_archive = False
     if "selected_slide_id" not in st.session_state:
         st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
     if "selected_slide_radio" not in st.session_state:
@@ -419,98 +426,110 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
         st.caption("All slides export to PowerPoint automatically.")
         st.divider()
 
-        with st.expander("Add slides", expanded=False):
-            new_role = st.selectbox("New slide role", SLIDE_ROLES, index=SLIDE_ROLES.index("Custom / Unknown title"))
-            new_title = st.text_input("New slide title", placeholder="Leave blank if you do not know it yet")
-            new_prompt = st.text_area("Optional helper prompt", height=75, placeholder="What should this slide help the presenter do?")
+        add_slides_label = "Close add slides" if st.session_state.show_add_slides else "Add slides"
+        if st.button(add_slides_label, key="toggle_add_slides_panel", use_container_width=True):
+            st.session_state.show_add_slides = not st.session_state.show_add_slides
+            st.rerun()
 
-            selected_index = next((i for i, slide in enumerate(deck["slides"]) if slide["id"] == st.session_state.selected_slide_id), 0)
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Add after", use_container_width=True):
-                    slide = new_slide(new_role, new_title, new_prompt)
-                    deck["slides"].insert(selected_index + 1, slide)
-                    queue_slide_selection(slide["id"])
-                    st.rerun()
-            with col2:
-                if st.button("Add at end", use_container_width=True):
-                    slide = new_slide(new_role, new_title, new_prompt)
-                    deck["slides"].append(slide)
-                    queue_slide_selection(slide["id"])
-                    st.rerun()
+        if st.session_state.show_add_slides:
+            with st.container(border=True):
+                new_role = st.selectbox("New slide role", SLIDE_ROLES, index=SLIDE_ROLES.index("Custom / Unknown title"))
+                new_title = st.text_input("New slide title", placeholder="Leave blank if you do not know it yet")
+                new_prompt = st.text_area("Optional helper prompt", height=75, placeholder="What should this slide help the presenter do?")
+
+                selected_index = next((i for i, slide in enumerate(deck["slides"]) if slide["id"] == st.session_state.selected_slide_id), 0)
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Add after", use_container_width=True):
+                        slide = new_slide(new_role, new_title, new_prompt)
+                        deck["slides"].insert(selected_index + 1, slide)
+                        queue_slide_selection(slide["id"])
+                        st.rerun()
+                with col2:
+                    if st.button("Add at end", use_container_width=True):
+                        slide = new_slide(new_role, new_title, new_prompt)
+                        deck["slides"].append(slide)
+                        queue_slide_selection(slide["id"])
+                        st.rerun()
 
         st.divider()
-        with st.expander("GitHub archive", expanded=False):
-            if github_is_configured():
-                st.success(github_status_message())
-            else:
-                st.info(github_status_message())
+        github_label = "Close GitHub archive" if st.session_state.show_github_archive else "GitHub archive"
+        if st.button(github_label, key="toggle_github_archive_panel", use_container_width=True):
+            st.session_state.show_github_archive = not st.session_state.show_github_archive
+            st.rerun()
 
-            search_text = st.text_input("Search archive", placeholder="presenter, title, or date")
-            if st.button("Find saved presentations", use_container_width=True):
-                try:
-                    st.session_state.archive_results = list_archives_from_github(search_text)
-                    if not st.session_state.archive_results:
-                        st.info("No matching saved presentations found.")
-                except GitHubStorageError as exc:
-                    st.error(str(exc))
+        if st.session_state.show_github_archive:
+            with st.container(border=True):
+                if github_is_configured():
+                    st.success(github_status_message())
+                else:
+                    st.info(github_status_message())
 
-            results = st.session_state.get("archive_results", [])
-            if results:
-                # Keep labels readable but unique, so duplicate presentation names do not overwrite each other.
-                label_counts: Dict[str, int] = {}
-                labels: List[str] = []
-                for row in results:
-                    base_label = row.get("name", row.get("path", "Saved presentation"))
-                    label_counts[base_label] = label_counts.get(base_label, 0) + 1
-                    if label_counts[base_label] == 1:
-                        labels.append(base_label)
-                    else:
-                        labels.append(f"{base_label} [{row.get('path', '')}]")
-
-                selected_archive = st.selectbox("Saved presentations", labels)
-                selected_index = labels.index(selected_archive)
-                selected_row = results[selected_index]
-                selected_path = selected_row["path"]
-
-                if st.button("Load selected", use_container_width=True):
+                search_text = st.text_input("Search archive", placeholder="presenter, title, or date")
+                if st.button("Find saved presentations", use_container_width=True):
                     try:
-                        payload = load_json_from_github(selected_path)
-                        st.session_state.deck = normalize_loaded_deck(payload)
-                        st.session_state.archive_path = payload.get("archive_path", selected_path)
-                        queue_slide_selection(st.session_state.deck["slides"][0]["id"])
-                        clear_widget_state()
-                        st.success("Loaded from GitHub.")
-                        st.rerun()
+                        st.session_state.archive_results = list_archives_from_github(search_text)
+                        if not st.session_state.archive_results:
+                            st.info("No matching saved presentations found.")
                     except GitHubStorageError as exc:
                         st.error(str(exc))
 
-                st.divider()
-                with st.expander("Delete selected archive"):
-                    st.caption("Deletes the saved draft.json, presentation.pptx, mentor_review.docx, and any other files in that archive folder.")
-                    confirm_delete = st.checkbox(
-                        "I understand this permanently deletes the selected GitHub archive",
-                        key="widget__confirm_delete_archive",
-                    )
-                    delete_phrase = st.text_input(
-                        "Type DELETE to confirm",
-                        key="widget__delete_archive_phrase",
-                        placeholder="DELETE",
-                    )
-                    if st.button(
-                        "Delete selected from GitHub",
-                        use_container_width=True,
-                        disabled=not (confirm_delete and delete_phrase.strip().upper() == "DELETE"),
-                    ):
+                results = st.session_state.get("archive_results", [])
+                if results:
+                    # Keep labels readable but unique, so duplicate presentation names do not overwrite each other.
+                    label_counts: Dict[str, int] = {}
+                    labels: List[str] = []
+                    for row in results:
+                        base_label = row.get("name", row.get("path", "Saved presentation"))
+                        label_counts[base_label] = label_counts.get(base_label, 0) + 1
+                        if label_counts[base_label] == 1:
+                            labels.append(base_label)
+                        else:
+                            labels.append(f"{base_label} [{row.get('path', '')}]")
+
+                    selected_archive = st.selectbox("Saved presentations", labels)
+                    selected_index = labels.index(selected_archive)
+                    selected_row = results[selected_index]
+                    selected_path = selected_row["path"]
+
+                    if st.button("Load selected", use_container_width=True):
                         try:
-                            deleted_count = delete_archive_from_github(selected_path)
-                            st.session_state.archive_results = [row for row in results if row.get("path") != selected_path]
-                            if st.session_state.get("archive_path", "").strip().strip("/") == selected_path.strip().strip("/"):
-                                st.session_state.archive_path = ""
-                            st.success(f"Deleted {deleted_count} file(s) from GitHub.")
+                            payload = load_json_from_github(selected_path)
+                            st.session_state.deck = normalize_loaded_deck(payload)
+                            st.session_state.archive_path = payload.get("archive_path", selected_path)
+                            queue_slide_selection(st.session_state.deck["slides"][0]["id"])
+                            clear_widget_state()
+                            st.success("Loaded from GitHub.")
                             st.rerun()
                         except GitHubStorageError as exc:
                             st.error(str(exc))
+
+                    st.divider()
+                    with st.expander("Delete selected archive"):
+                        st.caption("Deletes the saved draft.json, presentation.pptx, mentor_review.docx, and any other files in that archive folder.")
+                        confirm_delete = st.checkbox(
+                            "I understand this permanently deletes the selected GitHub archive",
+                            key="widget__confirm_delete_archive",
+                        )
+                        delete_phrase = st.text_input(
+                            "Type DELETE to confirm",
+                            key="widget__delete_archive_phrase",
+                            placeholder="DELETE",
+                        )
+                        if st.button(
+                            "Delete selected from GitHub",
+                            use_container_width=True,
+                            disabled=not (confirm_delete and delete_phrase.strip().upper() == "DELETE"),
+                        ):
+                            try:
+                                deleted_count = delete_archive_from_github(selected_path)
+                                st.session_state.archive_results = [row for row in results if row.get("path") != selected_path]
+                                if st.session_state.get("archive_path", "").strip().strip("/") == selected_path.strip().strip("/"):
+                                    st.session_state.archive_path = ""
+                                st.success(f"Deleted {deleted_count} file(s) from GitHub.")
+                                st.rerun()
+                            except GitHubStorageError as exc:
+                                st.error(str(exc))
 
         st.divider()
         if st.button("Start blank presentation", use_container_width=True):

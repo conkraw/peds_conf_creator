@@ -19,7 +19,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from deck_model import APP_VERSION, identity_subtitle, identity_title, slide_output_title
+from deck_model import APP_VERSION, ensure_core_slide_order, identity_subtitle, identity_title, slide_output_title
 from preview_utils import render_pptx_slides_to_pngs
 
 BLUE = "4A90D9"
@@ -470,6 +470,7 @@ def _enable_track_changes(docx_stream: BytesIO) -> BytesIO:
 
 def build_mentor_review_docx(deck: Dict[str, Any], pptx_bytes: bytes | None = None) -> bytes:
     """Build the compact Journal-Club-style mentor review document."""
+    ensure_core_slide_order(deck)
     if pptx_bytes is None:
         try:
             from pptx_builder import build_pptx
