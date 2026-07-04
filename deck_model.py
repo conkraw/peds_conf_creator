@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.03-v5.10"
+APP_VERSION = "2026.07.03-v5.11"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -163,7 +163,7 @@ def disclosures_slide() -> Dict[str, Any]:
 
 def starter_slides_for_talk_type(talk_type: str) -> List[Dict[str, Any]]:
     """Return a recommended story scaffold for the selected talk type."""
-    base = [title_slide(), objectives_slide(), disclosures_slide()]
+    base = [title_slide(), disclosures_slide(), objectives_slide()]
 
     if talk_type == "Study Review":
         base.extend(

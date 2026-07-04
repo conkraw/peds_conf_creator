@@ -137,3 +137,6 @@ Update v5.9: reduced uploaded image and PPTX preview sizes in the app and mentor
 
 
 Update v5.10: increased uploaded image and PPTX preview sizes slightly in both the app and mentor DOCX while keeping them compact.
+
+
+Update v5.11: new presentation scaffolds now place Disclosures immediately after the Title slide, followed by Objectives.

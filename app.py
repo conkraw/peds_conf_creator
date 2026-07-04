@@ -586,7 +586,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_objectives_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Objectives")
-    #st.success("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
+    st.success("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
     ensure_objective_fields(slide)
     render_bloom_helper()
     st.caption("Choose a Bloom-style action word for each objective, then enter the explanatory sentence.")
@@ -738,7 +738,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
     if pptx_bytes:
         slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
         slide_word = "slide" if slide_count == 1 else "slides"
-        #st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}).")
+        st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
         preview_bytes = ensure_uploaded_slide_preview(slide)
         if preview_bytes:
             st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", width=420)
@@ -882,17 +882,17 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
         pptx_info = get_uploaded_slide_pptx(slide)
         if pptx_info.get("data_base64"):
             pptx_replacements.append(f"Slide {idx}: {pptx_info.get('filename', 'uploaded slide.pptx')}")
-    #if pptx_replacements:
-    #    st.success("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
+    if pptx_replacements:
+        st.success("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
         st.caption("Give this to the mentor for comments or Track Changes. Critiques are not stored in the app.")
         complete_mentor_doc = mentor_docx_contains_complete_review_fields(mentor_docx_bytes)
-        #if complete_mentor_doc:
-            #st.success(f"Complete mentor template active ({APP_VERSION}): presentation plan, core question, story arc, objectives, take-home points, visuals, and speaker notes are included.")
-        #else:
-        #    st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
+        if complete_mentor_doc:
+            st.success(f"Complete mentor template active ({APP_VERSION}): presentation plan, core question, story arc, objectives, take-home points, visuals, and speaker notes are included.")
+        else:
+            st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
         mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")
         st.download_button(
             "Download mentor DOCX",
