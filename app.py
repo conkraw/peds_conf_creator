@@ -882,8 +882,8 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
         pptx_info = get_uploaded_slide_pptx(slide)
         if pptx_info.get("data_base64"):
             pptx_replacements.append(f"Slide {idx}: {pptx_info.get('filename', 'uploaded slide.pptx')}")
-    if pptx_replacements:
-        st.success("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
+    #if pptx_replacements:
+    #    st.success("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
