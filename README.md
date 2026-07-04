@@ -131,3 +131,6 @@ Update v5.7: the mentor DOCX now has an unmistakable v5.7 generation marker, a c
 
 
 Update v5.8: PPTX uploads now generate a preview image for the app and the mentor DOCX, while still exporting as editable PowerPoint objects. Uploaded images and uploaded PPTX files can also be downloaded again from the slide editor.
+
+
+Update v5.9: reduced uploaded image and PPTX preview sizes in the app and mentor DOCX. Source downloads and editable PPTX replacement behavior are unchanged.

@@ -741,7 +741,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
         st.success(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
         preview_bytes = ensure_uploaded_slide_preview(slide)
         if preview_bytes:
-            st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", use_container_width=True)
+            st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", width=360)
         else:
             st.info("Preview image is not available yet for this PPTX. The editable PPTX replacement will still export.")
         st.download_button(
@@ -763,7 +763,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
     image_bytes = visual_image_bytes(slide)
     image_info = get_visual_image(slide)
     if image_bytes:
-        st.image(image_bytes, caption=image_info.get("filename", "Uploaded visual"), use_container_width=True)
+        st.image(image_bytes, caption=image_info.get("filename", "Uploaded visual"), width=360)
         st.download_button(
             "Download uploaded image",
             data=image_bytes,
