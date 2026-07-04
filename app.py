@@ -586,7 +586,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_objectives_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Objectives")
-    st.success("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
+    #st.success("Objectives card layout is active: Bloom dropdowns → numbered visual objective cards in PowerPoint.")
     ensure_objective_fields(slide)
     render_bloom_helper()
     st.caption("Choose a Bloom-style action word for each objective, then enter the explanatory sentence.")
