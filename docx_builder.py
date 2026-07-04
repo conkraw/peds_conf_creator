@@ -1,4 +1,4 @@
-"""Streamlined mentor review Word export for the presentation builder.
+"""Compact mentor review Word export for the presentation builder.
 
 The review document is deliberately organized around what the mentor needs to
 see and edit: the actual PowerPoint slide, the editable on-slide wording,
@@ -127,6 +127,94 @@ def _clear_cell(cell) -> None:
         cell.add_paragraph()
 
 
+def _set_cell_width(cell, width_inches: float) -> None:
+    cell.width = Inches(width_inches)
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_w = tc_pr.find(qn("w:tcW"))
+    if tc_w is None:
+        tc_w = OxmlElement("w:tcW")
+        tc_pr.append(tc_w)
+    tc_w.set(qn("w:w"), str(int(width_inches * TWIPS_PER_INCH)))
+    tc_w.set(qn("w:type"), "dxa")
+
+
+def _shade_paragraph(paragraph, fill: str, border: str | None = None) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+    shd = p_pr.find(qn("w:shd"))
+    if shd is None:
+        shd = OxmlElement("w:shd")
+        p_pr.append(shd)
+    shd.set(qn("w:fill"), fill)
+    if border:
+        p_bdr = p_pr.find(qn("w:pBdr"))
+        if p_bdr is None:
+            p_bdr = OxmlElement("w:pBdr")
+            p_pr.append(p_bdr)
+        for edge in ("top", "left", "bottom", "right"):
+            node = p_bdr.find(qn(f"w:{edge}"))
+            if node is None:
+                node = OxmlElement(f"w:{edge}")
+                p_bdr.append(node)
+            node.set(qn("w:val"), "single")
+            node.set(qn("w:sz"), "4")
+            node.set(qn("w:space"), "0")
+            node.set(qn("w:color"), border)
+
+
+def _set_row_cant_split(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    cant_split = tr_pr.find(qn("w:cantSplit"))
+    if cant_split is None:
+        cant_split = OxmlElement("w:cantSplit")
+        tr_pr.append(cant_split)
+
+
+def _set_repeat_table_header(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    tbl_header = tr_pr.find(qn("w:tblHeader"))
+    if tbl_header is None:
+        tbl_header = OxmlElement("w:tblHeader")
+        tr_pr.append(tbl_header)
+    tbl_header.set(qn("w:val"), "true")
+
+
+def _add_cell_section(
+    cell,
+    heading: str,
+    body: str,
+    *,
+    heading_fill: str = LIGHT_BLUE,
+    body_fill: str = WHITE,
+    body_font_size: float = 8.4,
+    placeholder: str = "[blank]",
+) -> None:
+    heading_p = cell.add_paragraph()
+    heading_p.paragraph_format.space_before = Pt(1)
+    heading_p.paragraph_format.space_after = Pt(1)
+    heading_p.paragraph_format.left_indent = Pt(3)
+    heading_p.paragraph_format.right_indent = Pt(3)
+    _shade_paragraph(heading_p, heading_fill, BORDER_BLUE)
+    heading_run = heading_p.add_run(heading)
+    heading_run.font.name = DOC_FONT
+    heading_run.font.size = Pt(8.0)
+    heading_run.font.bold = True
+    heading_run.font.color.rgb = TEXT_BLUE if heading_fill != BLUE else RGBColor(255, 255, 255)
+
+    body_p = cell.add_paragraph()
+    body_p.paragraph_format.space_before = Pt(0)
+    body_p.paragraph_format.space_after = Pt(3)
+    body_p.paragraph_format.left_indent = Pt(4)
+    body_p.paragraph_format.right_indent = Pt(4)
+    body_p.paragraph_format.line_spacing = 1.0
+    _shade_paragraph(body_p, body_fill, BORDER_BLUE)
+    value = _safe_text(body) or placeholder
+    run = body_p.add_run(value)
+    run.font.name = DOC_FONT
+    run.font.size = Pt(body_font_size)
+    run.font.italic = not bool(_safe_text(body))
+    run.font.color.rgb = TEXT_DARK if _safe_text(body) else TEXT_MUTED
+
+
 def _write_cell_text(
     cell,
     text: Any,
@@ -207,77 +295,78 @@ def _add_overview(doc: Document, deck: Dict[str, Any]) -> None:
 
     title_table = doc.add_table(rows=2, cols=1)
     title_table.style = "Table Grid"
-    _lock_table_width(title_table, 7.35)
-    cell = title_table.cell(0, 0)
-    _shade_cell(cell, BLUE)
-    _set_cell_borders(cell, BLUE)
-    _set_cell_margins(cell, 95, 120, 95, 120)
-    _write_cell_text(cell, "MENTOR PRESENTATION REVIEW", font_size=15, bold=True, color=RGBColor(255, 255, 255), align=WD_ALIGN_PARAGRAPH.CENTER)
+    _lock_table_width(title_table, 7.40)
+    title_cell = title_table.cell(0, 0)
+    _shade_cell(title_cell, BLUE)
+    _set_cell_borders(title_cell, BLUE)
+    _set_cell_margins(title_cell, 75, 110, 75, 110)
+    _write_cell_text(title_cell, "MENTOR PRESENTATION REVIEW", font_size=14, bold=True, color=RGBColor(255, 255, 255), align=WD_ALIGN_PARAGRAPH.CENTER)
 
-    cell = title_table.cell(1, 0)
-    _shade_cell(cell, LIGHT_BLUE)
-    _set_cell_borders(cell, BORDER_BLUE)
-    _set_cell_margins(cell, 85, 110, 85, 110)
-    _write_cell_text(cell, f"{identity_title(deck)}\n{identity_subtitle(deck)}", font_size=10.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+    identity_cell = title_table.cell(1, 0)
+    _shade_cell(identity_cell, LIGHT_BLUE)
+    _set_cell_borders(identity_cell, BORDER_BLUE)
+    _set_cell_margins(identity_cell, 65, 100, 65, 100)
+    _write_cell_text(identity_cell, f"{identity_title(deck)}\n{identity_subtitle(deck)}", font_size=9.7, align=WD_ALIGN_PARAGRAPH.CENTER)
     doc.add_paragraph().paragraph_format.space_after = Pt(1)
 
-    _add_section_bar(doc, "Presentation overview")
     overview = doc.add_table(rows=0, cols=2)
     overview.style = "Table Grid"
     overview.autofit = False
     overview.alignment = WD_TABLE_ALIGNMENT.CENTER
-    widths = (1.75, 5.60)
-
     fields: List[Tuple[str, str]] = [
-        ("Title", _safe_text(meta.get("presentation_title")) or identity_title(deck)),
-        ("Subtitle", _safe_text(meta.get("presentation_subtitle"))),
+        ("Title / subtitle", " — ".join(filter(None, [_safe_text(meta.get("presentation_title")) or identity_title(deck), _safe_text(meta.get("presentation_subtitle"))]))),
         ("Presenter / date", " · ".join(filter(None, [_safe_text(meta.get("presenter")), _safe_text(meta.get("session_date"))]))),
         ("Audience / type", " · ".join(filter(None, [_safe_text(meta.get("audience")), _safe_text(meta.get("presentation_type"))]))),
         ("Core question", _safe_text(meta.get("core_question"))),
         ("Story arc", _safe_text(meta.get("story_arc"))),
     ]
     for label, value in fields:
-        if not value and label == "Subtitle":
-            continue
         row = overview.add_row()
-        for idx, width in enumerate(widths):
-            row.cells[idx].width = Inches(width)
+        _set_row_cant_split(row)
         left, right = row.cells
+        _set_cell_width(left, 1.45)
+        _set_cell_width(right, 5.95)
         _shade_cell(left, PALE_GRAY)
         _shade_cell(right, WHITE)
         _set_cell_borders(left, BORDER_GRAY)
         _set_cell_borders(right, BORDER_GRAY)
-        _set_cell_margins(left, 60, 90, 60, 90)
-        _set_cell_margins(right, 60, 90, 60, 90)
-        _write_cell_text(left, label, font_size=9.0, bold=True, color=TEXT_BLUE)
-        _write_cell_text(right, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_DARK if value else TEXT_MUTED)
+        _set_cell_margins(left, 48, 75, 48, 75)
+        _set_cell_margins(right, 48, 75, 48, 75)
+        _write_cell_text(left, label, font_size=8.3, bold=True, color=TEXT_BLUE)
+        _write_cell_text(right, value or "[blank]", font_size=8.3, italic=not bool(value), color=TEXT_DARK if value else TEXT_MUTED)
     doc.add_paragraph().paragraph_format.space_after = Pt(1)
 
-    _add_labeled_box(
-        doc,
-        "Overall mentor feedback",
-        "",
-        fill=PINK,
-        placeholder="Comment on the overall story, sequencing, omissions, and alignment between the objectives and the presentation.",
-        min_blank_lines=3,
-    )
+    review = doc.add_table(rows=2, cols=1)
+    review.style = "Table Grid"
+    _lock_table_width(review, 7.40)
+    review_heading = review.cell(0, 0)
+    _shade_cell(review_heading, PINK)
+    _set_cell_borders(review_heading, BORDER_BLUE)
+    _set_cell_margins(review_heading, 45, 80, 45, 80)
+    _write_cell_text(review_heading, "Overall mentor feedback", font_size=8.5, bold=True, color=TEXT_BLUE)
+    review_body = review.cell(1, 0)
+    _shade_cell(review_body, WHITE)
+    _set_cell_borders(review_body, BORDER_BLUE)
+    _set_cell_margins(review_body, 55, 85, 55, 85)
+    _write_cell_text(review_body, "Comment on the overall story, sequencing, omissions, and alignment between objectives and content.\n\n", font_size=8.2, italic=True, color=TEXT_MUTED)
 
-    _add_labeled_box(
-        doc,
-        "Suggested review approach",
-        "1. Does the presentation tell a clear story?\n2. Is each slide readable and necessary?\n3. Do the speaker notes create smooth transitions and accurate teaching points?\n4. Are images, data, and conclusions interpreted clearly?",
-        fill=PALE_BLUE,
-        border=BORDER_BLUE,
-        body_font_size=9.0,
-    )
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p.paragraph_format.space_before = Pt(1)
-    run = p.add_run(f"Generated with {APP_VERSION} · Use Track Changes or Word comments.")
+    checklist = doc.add_paragraph()
+    checklist.paragraph_format.space_before = Pt(4)
+    checklist.paragraph_format.space_after = Pt(1)
+    checklist.paragraph_format.line_spacing = 1.0
+    run = checklist.add_run("Review focus: story and sequencing · readable/necessary slides · accurate teaching points · useful transitions and speaker notes · clear interpretation of visuals/data")
     run.font.name = DOC_FONT
-    run.font.size = Pt(7.5)
+    run.font.size = Pt(7.8)
     run.font.color.rgb = TEXT_MUTED
+
+    version_p = doc.add_paragraph()
+    version_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    version_p.paragraph_format.space_before = Pt(0)
+    version_p.paragraph_format.space_after = Pt(0)
+    version_run = version_p.add_run(f"Generated with {APP_VERSION} · Track Changes is enabled.")
+    version_run.font.name = DOC_FONT
+    version_run.font.size = Pt(7.2)
+    version_run.font.color.rgb = TEXT_MUTED
 
 
 def _slide_editable_text(deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> str:
@@ -322,7 +411,7 @@ def _slide_editable_text(deck: Dict[str, Any], slide: Dict[str, Any], index: int
     return "\n".join(parts) or "[No editable on-slide wording entered in the app. Review the PowerPoint preview above.]"
 
 
-def _fit_image(image_bytes: bytes, max_width: float = 7.05, max_height: float = 3.95) -> Tuple[float, float]:
+def _fit_image(image_bytes: bytes, max_width: float = 2.30, max_height: float = 1.30) -> Tuple[float, float]:
     try:
         with Image.open(BytesIO(image_bytes)) as image:
             width_px, height_px = image.size
@@ -337,32 +426,7 @@ def _fit_image(image_bytes: bytes, max_width: float = 7.05, max_height: float = 
         return max_width, max_height
 
 
-def _add_slide_preview(doc: Document, preview_bytes: bytes | None) -> None:
-    _add_section_bar(doc, "PowerPoint preview", fill=BLUE, font_size=9.8)
-    table = doc.add_table(rows=1, cols=1)
-    table.style = "Table Grid"
-    _lock_table_width(table, 7.35)
-    cell = table.cell(0, 0)
-    _shade_cell(cell, WHITE)
-    _set_cell_borders(cell, BORDER_BLUE)
-    _set_cell_margins(cell, 75, 75, 75, 75)
-    _clear_cell(cell)
-    paragraph = cell.paragraphs[0]
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    if preview_bytes:
-        width, height = _fit_image(preview_bytes)
-        run = paragraph.add_run()
-        run.add_picture(BytesIO(preview_bytes), width=Inches(width), height=Inches(height))
-    else:
-        run = paragraph.add_run("[PowerPoint preview could not be generated in this environment.]")
-        run.font.name = DOC_FONT
-        run.font.size = Pt(9)
-        run.font.italic = True
-        run.font.color.rgb = TEXT_MUTED
-    doc.add_paragraph().paragraph_format.space_after = Pt(1)
-
-
-def _add_slide_page(
+def _add_slide_review_table(
     doc: Document,
     deck: Dict[str, Any],
     slide: Dict[str, Any],
@@ -371,43 +435,112 @@ def _add_slide_page(
     preview_bytes: bytes | None,
 ) -> None:
     title = slide_output_title(deck, slide, index)
-    _add_section_bar(doc, f"Slide {index} of {total} · {title}", fill=BLUE, font_size=11.5)
-
     role = _safe_text(slide.get("role")) or "Slide"
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(2)
-    p.paragraph_format.space_after = Pt(3)
-    run = p.add_run(role)
-    run.font.name = DOC_FONT
-    run.font.size = Pt(8)
-    run.font.bold = True
-    run.font.color.rgb = TEXT_MUTED
 
-    _add_slide_preview(doc, preview_bytes or _fallback_visual_bytes(slide))
-    _add_labeled_box(
-        doc,
-        "Editable on-slide wording",
-        _slide_editable_text(deck, slide, index),
-        fill=PALE_BLUE,
-        body_font_size=9.0,
+    table = doc.add_table(rows=2, cols=2)
+    table.style = "Table Grid"
+    table.autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    tbl_pr = table._tbl.tblPr
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), str(int(7.40 * TWIPS_PER_INCH)))
+    tbl_w.set(qn("w:type"), "dxa")
+    layout = tbl_pr.find(qn("w:tblLayout"))
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(layout)
+    layout.set(qn("w:type"), "fixed")
+
+    header = table.rows[0]
+    _set_row_cant_split(header)
+    _set_repeat_table_header(header)
+    header_cell = header.cells[0].merge(header.cells[1])
+    _shade_cell(header_cell, BLUE)
+    _set_cell_borders(header_cell, BLUE)
+    _set_cell_margins(header_cell, 52, 85, 52, 85)
+    _write_cell_text(
+        header_cell,
+        f"Slide {index} of {total} · {role} · {title}",
+        font_size=9.6,
+        bold=True,
+        color=RGBColor(255, 255, 255),
     )
-    _add_labeled_box(
-        doc,
-        "Speaker notes",
-        _safe_text(slide.get("speaker_notes")),
-        fill=WHITE,
-        placeholder="[No speaker notes entered.]",
-        body_font_size=9.1,
-    )
-    _add_labeled_box(
-        doc,
-        "Mentor feedback",
+
+    content_row = table.rows[1]
+    preview_cell, text_cell = content_row.cells
+    _set_cell_width(preview_cell, 2.52)
+    _set_cell_width(text_cell, 4.88)
+    _shade_cell(preview_cell, WHITE)
+    _shade_cell(text_cell, WHITE)
+    _set_cell_borders(preview_cell, BORDER_BLUE)
+    _set_cell_borders(text_cell, BORDER_BLUE)
+    _set_cell_margins(preview_cell, 55, 55, 55, 55)
+    _set_cell_margins(text_cell, 40, 55, 40, 55)
+    preview_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+    text_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+
+    _clear_cell(preview_cell)
+    preview_heading = preview_cell.paragraphs[0]
+    preview_heading.paragraph_format.space_after = Pt(3)
+    preview_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _shade_paragraph(preview_heading, LIGHT_BLUE, BORDER_BLUE)
+    preview_run = preview_heading.add_run("SLIDE PREVIEW")
+    preview_run.font.name = DOC_FONT
+    preview_run.font.size = Pt(7.8)
+    preview_run.font.bold = True
+    preview_run.font.color.rgb = TEXT_BLUE
+
+    image_p = preview_cell.add_paragraph()
+    image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    image_p.paragraph_format.space_before = Pt(1)
+    image_p.paragraph_format.space_after = Pt(2)
+    image_data = preview_bytes or _fallback_visual_bytes(slide)
+    if image_data:
+        width, height = _fit_image(image_data)
+        image_p.add_run().add_picture(BytesIO(image_data), width=Inches(width), height=Inches(height))
+    else:
+        image_run = image_p.add_run("[Preview unavailable]")
+        image_run.font.name = DOC_FONT
+        image_run.font.size = Pt(8)
+        image_run.font.italic = True
+        image_run.font.color.rgb = TEXT_MUTED
+
+    _add_cell_section(
+        preview_cell,
+        "MENTOR FEEDBACK",
         "",
-        fill=PINK,
-        placeholder="Add comments on accuracy, clarity, slide design, transitions, or suggested revisions.",
-        min_blank_lines=3,
-        body_font_size=9.0,
+        heading_fill=PINK,
+        body_fill=WHITE,
+        body_font_size=8.0,
+        placeholder="Add comments on accuracy, clarity, design, transitions, or suggested revisions.\n\n\n",
     )
+
+    _clear_cell(text_cell)
+    _add_cell_section(
+        text_cell,
+        "ON-SLIDE WORDING",
+        _slide_editable_text(deck, slide, index),
+        heading_fill=LIGHT_BLUE,
+        body_fill=PALE_BLUE,
+        body_font_size=8.1,
+        placeholder="[No editable on-slide wording entered.]",
+    )
+    _add_cell_section(
+        text_cell,
+        "SPEAKER NOTES",
+        _safe_text(slide.get("speaker_notes")),
+        heading_fill=LIGHT_BLUE,
+        body_fill=WHITE,
+        body_font_size=8.2,
+        placeholder="[No speaker notes entered.]",
+    )
+
+    spacer = doc.add_paragraph()
+    spacer.paragraph_format.space_before = Pt(0)
+    spacer.paragraph_format.space_after = Pt(3)
 
 
 def _enable_track_changes(docx_stream: BytesIO) -> BytesIO:
@@ -445,23 +578,23 @@ def build_mentor_review_docx(deck: Dict[str, Any], pptx_bytes: bytes | None = No
     section = doc.sections[0]
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
-    section.top_margin = Inches(0.42)
-    section.bottom_margin = Inches(0.42)
+    section.top_margin = Inches(0.38)
+    section.bottom_margin = Inches(0.38)
     section.left_margin = Inches(0.55)
     section.right_margin = Inches(0.55)
 
     styles = doc.styles
     styles["Normal"].font.name = DOC_FONT
-    styles["Normal"].font.size = Pt(9.2)
+    styles["Normal"].font.size = Pt(8.4)
 
     _add_overview(doc, deck)
+    doc.add_page_break()
 
     slides = deck.get("slides", []) if isinstance(deck, dict) else []
     total = len(slides)
     for index, slide in enumerate(slides, start=1):
-        doc.add_page_break()
         preview = previews[index - 1] if index - 1 < len(previews) else None
-        _add_slide_page(doc, deck, slide, index, total, preview)
+        _add_slide_review_table(doc, deck, slide, index, total, preview)
 
     output = BytesIO()
     doc.save(output)
@@ -471,11 +604,11 @@ def build_mentor_review_docx(deck: Dict[str, Any], pptx_bytes: bytes | None = No
 
 def mentor_docx_contains_complete_review_fields(docx_bytes: bytes) -> bool:
     required_labels = [
-        "Presentation overview",
-        "PowerPoint preview",
-        "Editable on-slide wording",
-        "Speaker notes",
-        "Mentor feedback",
+        "MENTOR PRESENTATION REVIEW",
+        "SLIDE PREVIEW",
+        "ON-SLIDE WORDING",
+        "SPEAKER NOTES",
+        "MENTOR FEEDBACK",
         f"Generated with {APP_VERSION}",
     ]
     try:

@@ -155,3 +155,6 @@ Update v5.16: redesigned the mentor DOCX into a streamlined review packet. It no
 
 
 Update v5.17: disclosure slide text is now centered inside its content panel, without left alignment or bullets. This applies only to the Disclosures slide.
+
+
+Update v5.18: redesigned the mentor review as a compact portrait table document. Slide previews are smaller, editable slide wording and speaker notes appear beside the preview, mentor feedback remains editable, and slides flow continuously instead of forcing one or two pages per slide.
