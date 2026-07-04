@@ -870,7 +870,7 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
     """Render stacked export/archive controls in the right-side panel."""
     try:
         pptx_bytes = build_pptx(deck)
-        mentor_docx_bytes = build_mentor_review_docx(deck)
+        mentor_docx_bytes = build_mentor_review_docx(deck, pptx_bytes=pptx_bytes)
     except Exception as exc:
         st.error(f"Could not build exports: {exc}")
         return
@@ -887,10 +887,10 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
-        st.caption("Give this to the mentor for comments or Track Changes. Critiques are not stored in the app.")
+        st.caption("Streamlined review: each page shows the actual PowerPoint slide, editable slide wording, speaker notes, and a mentor feedback area.")
         complete_mentor_doc = mentor_docx_contains_complete_review_fields(mentor_docx_bytes)
         if complete_mentor_doc:
-            st.success(f"Complete mentor template active ({APP_VERSION}): presentation plan, core question, story arc, objectives, take-home points, visuals, and speaker notes are included.")
+            st.success(f"Streamlined mentor review active ({APP_VERSION}): PowerPoint previews, editable wording, images, speaker notes, and feedback areas are included.")
         else:
             st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
         mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")

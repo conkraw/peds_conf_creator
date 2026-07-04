@@ -149,3 +149,6 @@ Update v5.13: slide text on standard content and disclosure slides now appears i
 
 
 Update v5.15: slide text panels no longer automatically add bullet dots. Existing leading bullet/dash characters are stripped so statements appear as clean lines inside the colored box.
+
+
+Update v5.16: redesigned the mentor DOCX into a streamlined review packet. It now begins with a compact presentation overview, then shows the actual rendered PowerPoint slide, editable on-slide wording, speaker notes, and a mentor feedback box for every slide. App-only implementation metadata and the Bloom reference table were removed from the main review flow.

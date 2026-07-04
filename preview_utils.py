@@ -86,3 +86,31 @@ def render_pptx_first_slide_to_png(pptx_bytes: bytes) -> bytes | None:
     except Exception:
         return None
     return None
+
+
+def render_pptx_slides_to_pngs(pptx_bytes: bytes, scale: float = 1.6) -> list[bytes]:
+    """Render every slide in a PPTX to PNG bytes via LibreOffice PDF export."""
+    if not pptx_bytes or fitz is None:
+        return []
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_path = tmp / "presentation_preview.pptx"
+            input_path.write_bytes(pptx_bytes)
+            result = _run_libreoffice_convert(input_path, tmp, "pdf", timeout=180)
+            if result is None or result.returncode != 0:
+                return []
+            pdf_candidates = sorted(tmp.glob("*.pdf"))
+            if not pdf_candidates:
+                return []
+            doc = fitz.open(str(pdf_candidates[0]))
+            previews: list[bytes] = []
+            matrix = fitz.Matrix(scale, scale)
+            for page_index in range(doc.page_count):
+                page = doc.load_page(page_index)
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                previews.append(pix.tobytes("png"))
+            doc.close()
+            return previews
+    except Exception:
+        return []

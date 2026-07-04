@@ -1,57 +1,52 @@
-"""Word export logic for the Presentation PowerPoint Builder.
+"""Streamlined mentor review Word export for the presentation builder.
 
-The mentor review document is the review workspace. The app does not store mentor
-critiques; mentors can use Word comments or Track Changes in the generated DOCX.
+The review document is deliberately organized around what the mentor needs to
+see and edit: the actual PowerPoint slide, the editable on-slide wording,
+speaker notes, and a feedback area. App-only implementation metadata is kept out
+of the main review flow.
 """
 
 from __future__ import annotations
 
 import base64
 from io import BytesIO
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from PIL import Image
-
 from docx import Document
-from docx.enum.section import WD_ORIENT
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from deck_model import APP_VERSION, BLOOM_HELPER, identity_subtitle, identity_title, slide_output_title, split_nonempty_lines
-from preview_utils import render_pptx_first_slide_to_png
+from deck_model import APP_VERSION, identity_subtitle, identity_title, slide_output_title
+from preview_utils import render_pptx_slides_to_pngs
 
 BLUE = "1F4E79"
 LIGHT_BLUE = "D9EAF7"
-HEADER_GRAY = "D9D9D9"
-PALE_GRAY = "F7F7F7"
-PINK = "F4CCCC"
+PALE_BLUE = "EEF5FB"
+PALE_GRAY = "F5F6F7"
+PINK = "FCE8E8"
 WHITE = "FFFFFF"
-BORDER = "000000"
+BORDER_BLUE = "9BB8D6"
+BORDER_GRAY = "B7B7B7"
 DOC_FONT = "Calibri"
-TEXT_DARK = RGBColor(25, 25, 25)
+TEXT_DARK = RGBColor(35, 35, 35)
 TEXT_MUTED = RGBColor(95, 95, 95)
-EMU_PER_INCH = 914400
+TEXT_BLUE = RGBColor(31, 78, 121)
 TWIPS_PER_INCH = 1440
-
-
-# -----------------------------------------------------------------------------
-# Low-level table formatting helpers
-# -----------------------------------------------------------------------------
 
 
 def _safe_text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
-def _visual_image_bytes(slide: Dict[str, Any]) -> bytes | None:
-    image = slide.get("visual_image", {})
-    if not isinstance(image, dict):
+def _decode_payload(payload: Any) -> bytes | None:
+    if not isinstance(payload, dict):
         return None
-    encoded = image.get("data_base64")
+    encoded = payload.get("data_base64")
     if not encoded:
         return None
     try:
@@ -60,68 +55,8 @@ def _visual_image_bytes(slide: Dict[str, Any]) -> bytes | None:
         return None
 
 
-def _visual_image_filename(slide: Dict[str, Any]) -> str:
-    image = slide.get("visual_image", {})
-    if not isinstance(image, dict):
-        return ""
-    return _safe_text(image.get("filename"))
-
-
-def _uploaded_slide_pptx_filename(slide: Dict[str, Any]) -> str:
-    pptx = slide.get("uploaded_slide_pptx", {})
-    if not isinstance(pptx, dict):
-        return ""
-    return _safe_text(pptx.get("filename"))
-
-
-def _uploaded_slide_pptx_bytes(slide: Dict[str, Any]) -> bytes | None:
-    pptx = slide.get("uploaded_slide_pptx", {})
-    if not isinstance(pptx, dict):
-        return None
-    encoded = pptx.get("data_base64")
-    if not encoded:
-        return None
-    try:
-        return base64.b64decode(encoded)
-    except Exception:
-        return None
-
-
-def _uploaded_slide_preview_image_bytes(slide: Dict[str, Any]) -> bytes | None:
-    image = slide.get("uploaded_slide_preview_image", {})
-    if not isinstance(image, dict):
-        return None
-    encoded = image.get("data_base64")
-    if not encoded:
-        return None
-    try:
-        return base64.b64decode(encoded)
-    except Exception:
-        return None
-
-
-def _ensure_uploaded_slide_preview_image(slide: Dict[str, Any]) -> bytes | None:
-    preview = _uploaded_slide_preview_image_bytes(slide)
-    if preview:
-        return preview
-    pptx_bytes = _uploaded_slide_pptx_bytes(slide)
-    if not pptx_bytes:
-        return None
-    preview = render_pptx_first_slide_to_png(pptx_bytes)
-    if preview:
-        filename = _uploaded_slide_pptx_filename(slide) or "uploaded_slide.pptx"
-        stem = filename.rsplit('.', 1)[0]
-        slide["uploaded_slide_preview_image"] = {
-            "filename": f"{stem}_preview.png",
-            "content_type": "image/png",
-            "data_base64": base64.b64encode(preview).decode("ascii"),
-        }
-    return preview
-
-
-def _body_width_inches(doc: Document) -> float:
-    section = doc.sections[-1]
-    return float(section.page_width - section.left_margin - section.right_margin) / EMU_PER_INCH
+def _fallback_visual_bytes(slide: Dict[str, Any]) -> bytes | None:
+    return _decode_payload(slide.get("uploaded_slide_preview_image")) or _decode_payload(slide.get("visual_image"))
 
 
 def _shade_cell(cell, fill: str) -> None:
@@ -133,7 +68,7 @@ def _shade_cell(cell, fill: str) -> None:
     shd.set(qn("w:fill"), fill)
 
 
-def _set_cell_borders(cell, color: str = BORDER, size: str = "6") -> None:
+def _set_cell_borders(cell, color: str = BORDER_GRAY, size: str = "6") -> None:
     tc_pr = cell._tc.get_or_add_tcPr()
     borders = tc_pr.find(qn("w:tcBorders"))
     if borders is None:
@@ -150,7 +85,7 @@ def _set_cell_borders(cell, color: str = BORDER, size: str = "6") -> None:
         element.set(qn("w:color"), color)
 
 
-def _set_cell_margins(cell, top: int = 70, start: int = 90, bottom: int = 70, end: int = 90) -> None:
+def _set_cell_margins(cell, top: int = 90, start: int = 110, bottom: int = 90, end: int = 110) -> None:
     tc_pr = cell._tc.get_or_add_tcPr()
     tc_mar = tc_pr.first_child_found_in("w:tcMar")
     if tc_mar is None:
@@ -165,18 +100,7 @@ def _set_cell_margins(cell, top: int = 70, start: int = 90, bottom: int = 70, en
         node.set(qn("w:type"), "dxa")
 
 
-def _set_cell_width(cell, width_inches: float) -> None:
-    cell.width = Inches(width_inches)
-    tc_pr = cell._tc.get_or_add_tcPr()
-    tc_w = tc_pr.find(qn("w:tcW"))
-    if tc_w is None:
-        tc_w = OxmlElement("w:tcW")
-        tc_pr.append(tc_w)
-    tc_w.set(qn("w:w"), str(int(width_inches * TWIPS_PER_INCH)))
-    tc_w.set(qn("w:type"), "dxa")
-
-
-def _lock_table_widths(table, widths: List[float]) -> None:
+def _lock_table_width(table, width_inches: float) -> None:
     table.autofit = False
     table.allow_autofit = False
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -185,38 +109,16 @@ def _lock_table_widths(table, widths: List[float]) -> None:
     if tbl_w is None:
         tbl_w = OxmlElement("w:tblW")
         tbl_pr.append(tbl_w)
-    tbl_w.set(qn("w:w"), str(int(sum(widths) * TWIPS_PER_INCH)))
+    tbl_w.set(qn("w:w"), str(int(width_inches * TWIPS_PER_INCH)))
     tbl_w.set(qn("w:type"), "dxa")
-    tbl_layout = tbl_pr.find(qn("w:tblLayout"))
-    if tbl_layout is None:
-        tbl_layout = OxmlElement("w:tblLayout")
-        tbl_pr.append(tbl_layout)
-    tbl_layout.set(qn("w:type"), "fixed")
+    layout = tbl_pr.find(qn("w:tblLayout"))
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(layout)
+    layout.set(qn("w:type"), "fixed")
     for row in table.rows:
-        for idx, width in enumerate(widths):
-            if idx < len(row.cells):
-                _set_cell_width(row.cells[idx], width)
-
-
-def _set_row_height(row, height_pt: float, exact: bool = False) -> None:
-    row.height = Pt(height_pt)
-    row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY if exact else WD_ROW_HEIGHT_RULE.AT_LEAST
-    tr_pr = row._tr.get_or_add_trPr()
-    tr_height = tr_pr.find(qn("w:trHeight"))
-    if tr_height is None:
-        tr_height = OxmlElement("w:trHeight")
-        tr_pr.append(tr_height)
-    tr_height.set(qn("w:val"), str(int(height_pt * 20)))
-    tr_height.set(qn("w:hRule"), "exact" if exact else "atLeast")
-
-
-def _prevent_row_split(row) -> None:
-    """Keep a table row together on one page when Word paginates the DOCX."""
-    tr_pr = row._tr.get_or_add_trPr()
-    cant_split = tr_pr.find(qn("w:cantSplit"))
-    if cant_split is None:
-        cant_split = OxmlElement("w:cantSplit")
-        tr_pr.append(cant_split)
+        for cell in row.cells:
+            cell.width = Inches(width_inches / len(row.cells))
 
 
 def _clear_cell(cell) -> None:
@@ -229,22 +131,21 @@ def _write_cell_text(
     cell,
     text: Any,
     *,
-    font_size: float = 9.0,
+    font_size: float = 9.5,
     bold: bool = False,
     italic: bool = False,
     color: RGBColor = TEXT_DARK,
     align=WD_ALIGN_PARAGRAPH.LEFT,
-    line_spacing: float = 1.0,
 ) -> None:
     _clear_cell(cell)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-    paragraphs = _safe_text(text).splitlines() or [""]
-    for idx, raw in enumerate(paragraphs):
+    lines = _safe_text(text).splitlines() or [""]
+    for idx, line in enumerate(lines):
         p = cell.paragraphs[0] if idx == 0 else cell.add_paragraph()
         p.alignment = align
         p.paragraph_format.space_after = Pt(0)
-        p.paragraph_format.line_spacing = line_spacing
-        run = p.add_run(raw)
+        p.paragraph_format.line_spacing = 1.0
+        run = p.add_run(line)
         run.font.name = DOC_FONT
         run.font.size = Pt(font_size)
         run.font.bold = bold
@@ -252,347 +153,264 @@ def _write_cell_text(
         run.font.color.rgb = color
 
 
-# -----------------------------------------------------------------------------
-# Document building blocks
-# -----------------------------------------------------------------------------
-
-
-def _add_title_block(doc: Document, deck: Dict[str, Any]) -> None:
-    width = _body_width_inches(doc)
-    table = doc.add_table(rows=3, cols=1)
-    table.style = "Table Grid"
-    _lock_table_widths(table, [width])
-
-    cell = table.cell(0, 0)
-    _shade_cell(cell, BLUE)
-    _set_cell_borders(cell)
-    _set_cell_margins(cell, 90, 120, 90, 120)
-    _write_cell_text(cell, "MENTOR POWERPOINT REVIEW DOCUMENT", font_size=14, bold=True, color=RGBColor(255, 255, 255), align=WD_ALIGN_PARAGRAPH.CENTER)
-
-    cell = table.cell(1, 0)
-    _shade_cell(cell, LIGHT_BLUE)
-    _set_cell_borders(cell)
-    _set_cell_margins(cell, 90, 120, 90, 120)
-    _write_cell_text(cell, f"{identity_title(deck)}\n{identity_subtitle(deck)}", font_size=10.5, bold=False, color=TEXT_DARK, align=WD_ALIGN_PARAGRAPH.CENTER)
-
-    cell = table.cell(2, 0)
-    _shade_cell(cell, PALE_GRAY)
-    _set_cell_borders(cell)
-    _set_cell_margins(cell, 55, 90, 55, 90)
-    _write_cell_text(
-        cell,
-        f"Generated by Pediatric Residency Presentation Builder {APP_VERSION} - complete presentation plan, story arc, structured objectives, take-home points, visuals, and speaker notes included.",
-        font_size=8.3,
-        bold=True,
-        color=TEXT_MUTED,
-        align=WD_ALIGN_PARAGRAPH.CENTER,
-    )
-
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-
-
-def _add_presentation_overview(doc: Document, deck: Dict[str, Any]) -> None:
-    """Add every presentation-level field from the app to the mentor document."""
-    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
-    width = _body_width_inches(doc)
-
-    _add_slide_banner(doc, "Presentation plan and story arc")
-    table = doc.add_table(rows=0, cols=2)
-    table.style = "Table Grid"
-    _lock_table_widths(table, [1.65, width - 1.65])
-
-    overview_rows = [
-        ("Presentation title", _safe_text(meta.get("presentation_title"))),
-        ("Presentation subtitle", _safe_text(meta.get("presentation_subtitle"))),
-        ("Presenter", _safe_text(meta.get("presenter"))),
-        ("Session date", _safe_text(meta.get("session_date"))),
-        ("Audience", _safe_text(meta.get("audience"))),
-        ("Presentation type", _safe_text(meta.get("presentation_type"))),
-        ("Core question / tension", _safe_text(meta.get("core_question"))),
-        ("Story arc", _safe_text(meta.get("story_arc"))),
-        ("Internal archive notes", _safe_text(meta.get("archive_notes"))),
-        ("App version", _safe_text(deck.get("app_version"))),
-        ("Total slides", str(len(deck.get("slides", [])))),
-    ]
-    for label, value in overview_rows:
-        _add_field_row(table, label, value)
-
-    # Include any future nonblank metadata fields automatically.
-    known_metadata_keys = {
-        "presentation_title", "presentation_subtitle", "presenter",
-        "session_date", "audience", "presentation_type", "core_question",
-        "story_arc", "archive_notes",
-    }
-    for key, raw_value in meta.items():
-        if key in known_metadata_keys:
-            continue
-        value = _safe_text(raw_value)
-        if value:
-            label = key.replace("_", " ").strip().title()
-            _add_field_row(table, f"Additional metadata - {label}", value)
-
-    _add_field_row(
-        table,
-        "Overall mentor review",
-        "[Comment on the overall story, alignment between title/objectives/content, sequencing, omissions, and major revisions.]",
-        PINK,
-    )
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
-
-
-def _add_guidelines(doc: Document) -> None:
-    width = _body_width_inches(doc)
-    table = doc.add_table(rows=5, cols=1)
-    table.style = "Table Grid"
-    _lock_table_widths(table, [width])
-
-    rows = [
-        ("How to use this document", LIGHT_BLUE, True),
-        ("Use Word comments or Track Changes to critique slide wording, clarity, educational flow, accuracy, and speaker notes. Do not rewrite the presentation inside the app. The resident should return to the app and make final edits there.", WHITE, False),
-        ("Mentor focus", LIGHT_BLUE, True),
-        ("1. Does the title/objectives match the actual story?\n2. Do the slide titles tell a clear beginning-middle-end narrative?\n3. Is each slide readable and teachable?\n4. Are the speaker notes useful enough for rehearsal?\n5. Are results/data interpreted rather than dumped?", WHITE, False),
-        ("Track Changes is enabled in this document so edits are easier to review.", PALE_GRAY, False),
-    ]
-    for i, (text, fill, bold) in enumerate(rows):
-        cell = table.cell(i, 0)
-        _shade_cell(cell, fill)
-        _set_cell_borders(cell)
-        _set_cell_margins(cell)
-        _write_cell_text(cell, text, font_size=9.2 if not bold else 9.8, bold=bold, color=TEXT_DARK)
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-
-
-def _add_bloom_reference(doc: Document) -> None:
-    width = _body_width_inches(doc)
-    table = doc.add_table(rows=1 + len(BLOOM_HELPER), cols=2)
-    table.style = "Table Grid"
-    _lock_table_widths(table, [1.35, width - 1.35])
-
-    h1, h2 = table.rows[0].cells
-    for cell, text in [(h1, "Bloom level"), (h2, "Useful verbs")]:
-        _shade_cell(cell, HEADER_GRAY)
-        _set_cell_borders(cell)
-        _set_cell_margins(cell)
-        _write_cell_text(cell, text, font_size=8.5, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
-
-    for row_idx, (level, verbs) in enumerate(BLOOM_HELPER.items(), start=1):
-        c1, c2 = table.rows[row_idx].cells
-        _shade_cell(c1, WHITE)
-        _shade_cell(c2, WHITE)
-        _set_cell_borders(c1)
-        _set_cell_borders(c2)
-        _set_cell_margins(c1)
-        _set_cell_margins(c2)
-        _write_cell_text(c1, level, font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
-        _write_cell_text(c2, verbs, font_size=8.5)
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
-
-
-def _add_slide_banner(doc: Document, text: str) -> None:
-    width = _body_width_inches(doc)
+def _add_section_bar(doc: Document, text: str, fill: str = BLUE, font_size: float = 11.5) -> None:
     table = doc.add_table(rows=1, cols=1)
     table.style = "Table Grid"
-    _lock_table_widths(table, [width])
+    _lock_table_width(table, 7.35)
     cell = table.cell(0, 0)
-    _shade_cell(cell, BLUE)
-    _set_cell_borders(cell)
-    _set_cell_margins(cell, 65, 90, 65, 90)
-    _write_cell_text(cell, text, font_size=10.5, bold=True, color=RGBColor(255, 255, 255))
-    _set_row_height(table.rows[0], 20, exact=False)
+    _shade_cell(cell, fill)
+    _set_cell_borders(cell, fill)
+    _set_cell_margins(cell, 75, 110, 75, 110)
+    _write_cell_text(cell, text, font_size=font_size, bold=True, color=RGBColor(255, 255, 255))
 
 
-def _add_field_row(table, label: str, value: str, label_fill: str = HEADER_GRAY) -> None:
-    row = table.add_row()
-    _prevent_row_split(row)
-    label_cell, value_cell = row.cells
-    _shade_cell(label_cell, label_fill)
-    _shade_cell(value_cell, WHITE)
-    _set_cell_borders(label_cell)
-    _set_cell_borders(value_cell)
-    _set_cell_margins(label_cell)
-    _set_cell_margins(value_cell)
-    _write_cell_text(label_cell, label, font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
-    _write_cell_text(value_cell, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_MUTED if not value else TEXT_DARK)
-
-
-def _fit_image_dimensions(image_bytes: bytes, max_width: float = 4.15, max_height: float = 1.90) -> tuple[float, float]:
-    """Return moderately sized image dimensions in inches for the mentor review preview cell."""
-    try:
-        with Image.open(BytesIO(image_bytes)) as img:
-            px_w, px_h = img.size
-    except Exception:
-        return max_width, max_height
-
-    if not px_w or not px_h:
-        return max_width, max_height
-
-    image_ratio = px_w / px_h
-    box_ratio = max_width / max_height
-    if image_ratio >= box_ratio:
-        width = max_width
-        height = max_width / image_ratio
-    else:
-        height = max_height
-        width = max_height * image_ratio
-    return max(0.1, width), max(0.1, height)
-
-
-def _add_image_row(table, slide: Dict[str, Any], label_fill: str = HEADER_GRAY) -> None:
-    pptx_name = _uploaded_slide_pptx_filename(slide)
-    image_bytes = _visual_image_bytes(slide)
-    image_note = ""
-    if pptx_name:
-        image_bytes = _ensure_uploaded_slide_preview_image(slide)
-        image_note = f"Editable PPTX slide replacement uploaded: {pptx_name}. Preview shown below. The first slide is imported into the exported PowerPoint as editable objects."
-
-    if not image_bytes and not image_note:
-        _add_field_row(table, "Uploaded visual", "[none]", label_fill)
-        return
-
-    row = table.add_row()
-    _prevent_row_split(row)
-    label_cell, value_cell = row.cells
-    _shade_cell(label_cell, label_fill)
-    _shade_cell(value_cell, WHITE)
-    _set_cell_borders(label_cell)
-    _set_cell_borders(value_cell)
-    _set_cell_margins(label_cell)
-    _set_cell_margins(value_cell)
-    _write_cell_text(label_cell, "Uploaded visual", font_size=8.5, bold=True, color=RGBColor(31, 78, 121))
-
-    _clear_cell(value_cell)
-    if image_note:
-        note_p = value_cell.paragraphs[0]
-        note_p.paragraph_format.space_after = Pt(4)
-        note_run = note_p.add_run(image_note)
-        note_run.font.name = DOC_FONT
-        note_run.font.size = Pt(8.5)
-        note_run.font.color.rgb = TEXT_MUTED
-    try:
-        if image_bytes:
-            image_width, image_height = _fit_image_dimensions(image_bytes)
-            image_p = value_cell.add_paragraph() if image_note else value_cell.paragraphs[0]
-            image_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            image_p.paragraph_format.space_after = Pt(0)
-            image_run = image_p.add_run()
-            image_run.add_picture(
-                BytesIO(image_bytes),
-                width=Inches(image_width),
-                height=Inches(image_height),
-            )
-        elif image_note:
-            value_cell.add_paragraph("[Preview image could not be generated for this PPTX in the current environment.]")
-    except Exception:
-        value_cell.add_paragraph("[Uploaded visual could not be rendered in Word preview]")
-
-
-def _add_slide_review_block(doc: Document, deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> None:
-    """Add a complete slide-by-slide record of every editable app field."""
-    title = slide_output_title(deck, slide, index)
-    role = _safe_text(slide.get("role")) or "Slide"
-    kind = _safe_text(slide.get("slide_kind")) or "content"
-    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
-    _add_slide_banner(doc, f"Slide {index}: {title}")
-
-    width = _body_width_inches(doc)
-    table = doc.add_table(rows=0, cols=2)
+def _add_labeled_box(
+    doc: Document,
+    heading: str,
+    body: str,
+    *,
+    fill: str = WHITE,
+    border: str = BORDER_BLUE,
+    body_font_size: float = 9.2,
+    placeholder: str = "[blank]",
+    min_blank_lines: int = 0,
+) -> None:
+    table = doc.add_table(rows=2, cols=1)
     table.style = "Table Grid"
-    _lock_table_widths(table, [1.65, width - 1.65])
+    _lock_table_width(table, 7.35)
 
-    # Fields shared by all slide types.
-    _add_field_row(table, "Role", role)
-    _add_field_row(table, "Slide template / type", kind)
-    _add_field_row(table, "Required slide", "Yes" if bool(slide.get("required", False)) else "No")
-    _add_field_row(table, "Helper prompt", _safe_text(slide.get("prompt")))
-    _add_field_row(table, "PowerPoint output title", title)
-    _add_field_row(table, "Slide title", _safe_text(slide.get("title")))
-    _add_field_row(table, "Subtitle", _safe_text(slide.get("subtitle")))
-    _add_field_row(table, "Section box label", _safe_text(slide.get("section_box_label")))
+    heading_cell = table.cell(0, 0)
+    _shade_cell(heading_cell, LIGHT_BLUE)
+    _set_cell_borders(heading_cell, border)
+    _set_cell_margins(heading_cell, 55, 90, 55, 90)
+    _write_cell_text(heading_cell, heading, font_size=9.4, bold=True, color=TEXT_BLUE)
 
-    # The title slide is driven by presentation metadata rather than ordinary body fields.
-    if role == "Title" or kind == "title":
-        _add_field_row(table, "Presentation title", _safe_text(meta.get("presentation_title")))
-        _add_field_row(table, "Presentation subtitle", _safe_text(meta.get("presentation_subtitle")))
-        _add_field_row(table, "Presenter", _safe_text(meta.get("presenter")))
-        _add_field_row(table, "Session date", _safe_text(meta.get("session_date")))
-        _add_field_row(table, "Audience", _safe_text(meta.get("audience")))
-        _add_field_row(table, "Presentation type", _safe_text(meta.get("presentation_type")))
-        _add_field_row(table, "Core question / tension", _safe_text(meta.get("core_question")))
-        _add_field_row(table, "Story arc", _safe_text(meta.get("story_arc")))
-        _add_field_row(table, "Internal archive notes", _safe_text(meta.get("archive_notes")))
+    body_cell = table.cell(1, 0)
+    _shade_cell(body_cell, fill)
+    _set_cell_borders(body_cell, border)
+    _set_cell_margins(body_cell, 80, 105, 80, 105)
+    value = _safe_text(body) or placeholder
+    if min_blank_lines > 0 and not _safe_text(body):
+        value = placeholder + ("\n" * min_blank_lines)
+    _write_cell_text(
+        body_cell,
+        value,
+        font_size=body_font_size,
+        italic=not bool(_safe_text(body)),
+        color=TEXT_MUTED if not _safe_text(body) else TEXT_DARK,
+    )
+    doc.add_paragraph().paragraph_format.space_after = Pt(1)
 
-    # Objectives use structured fields in the app; show each one explicitly.
-    elif role == "Objectives" or kind == "objectives":
-        _add_field_row(table, "Objectives intro", _safe_text(slide.get("objectives_intro")))
-        for objective_number in range(1, 4):
-            _add_field_row(
-                table,
-                f"Objective {objective_number} action word",
-                _safe_text(slide.get(f"objective_{objective_number}_verb")),
-            )
-            _add_field_row(
-                table,
-                f"Objective {objective_number} sentence",
-                _safe_text(slide.get(f"objective_{objective_number}_text")),
-            )
-        _add_field_row(table, "Bottom takeaway banner", _safe_text(slide.get("objectives_takeaway")))
-        _add_field_row(table, "Compiled slide text", _safe_text(slide.get("body")))
 
-    # Take-home slides also use five structured fields.
-    elif role == "Take-home" or kind == "takehome":
-        for point_number in range(1, 6):
-            _add_field_row(
-                table,
-                f"Take-home point {point_number}",
-                _safe_text(slide.get(f"takehome_point_{point_number}")),
-            )
-        _add_field_row(table, "Compiled slide text", _safe_text(slide.get("body")))
+def _add_overview(doc: Document, deck: Dict[str, Any]) -> None:
+    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
 
-    # Ordinary slides use the main body field.
-    else:
-        _add_field_row(table, "Slide text", _safe_text(slide.get("body")))
+    title_table = doc.add_table(rows=2, cols=1)
+    title_table.style = "Table Grid"
+    _lock_table_width(title_table, 7.35)
+    cell = title_table.cell(0, 0)
+    _shade_cell(cell, BLUE)
+    _set_cell_borders(cell, BLUE)
+    _set_cell_margins(cell, 95, 120, 95, 120)
+    _write_cell_text(cell, "MENTOR PRESENTATION REVIEW", font_size=15, bold=True, color=RGBColor(255, 255, 255), align=WD_ALIGN_PARAGRAPH.CENTER)
 
-    # Include any future nonblank slide fields automatically, without exposing
-    # binary image/PPTX payloads or duplicating fields already shown above.
-    represented_keys = {
-        "id", "role", "slide_kind", "required", "prompt", "title", "subtitle",
-        "section_box_label", "body", "visual_plan", "visual_image",
-        "uploaded_slide_pptx", "uploaded_slide_preview_image", "visual_full_slide", "discussion_prompt",
-        "speaker_notes", "objectives_intro", "objective_1_verb",
-        "objective_1_text", "objective_2_verb", "objective_2_text",
-        "objective_3_verb", "objective_3_text", "objectives_takeaway",
-        "takehome_point_1", "takehome_point_2", "takehome_point_3",
-        "takehome_point_4", "takehome_point_5",
-    }
-    for key, raw_value in slide.items():
-        if key in represented_keys:
+    cell = title_table.cell(1, 0)
+    _shade_cell(cell, LIGHT_BLUE)
+    _set_cell_borders(cell, BORDER_BLUE)
+    _set_cell_margins(cell, 85, 110, 85, 110)
+    _write_cell_text(cell, f"{identity_title(deck)}\n{identity_subtitle(deck)}", font_size=10.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+    doc.add_paragraph().paragraph_format.space_after = Pt(1)
+
+    _add_section_bar(doc, "Presentation overview")
+    overview = doc.add_table(rows=0, cols=2)
+    overview.style = "Table Grid"
+    overview.autofit = False
+    overview.alignment = WD_TABLE_ALIGNMENT.CENTER
+    widths = (1.75, 5.60)
+
+    fields: List[Tuple[str, str]] = [
+        ("Title", _safe_text(meta.get("presentation_title")) or identity_title(deck)),
+        ("Subtitle", _safe_text(meta.get("presentation_subtitle"))),
+        ("Presenter / date", " · ".join(filter(None, [_safe_text(meta.get("presenter")), _safe_text(meta.get("session_date"))]))),
+        ("Audience / type", " · ".join(filter(None, [_safe_text(meta.get("audience")), _safe_text(meta.get("presentation_type"))]))),
+        ("Core question", _safe_text(meta.get("core_question"))),
+        ("Story arc", _safe_text(meta.get("story_arc"))),
+    ]
+    for label, value in fields:
+        if not value and label == "Subtitle":
             continue
-        value = _safe_text(raw_value)
-        if value:
-            label = key.replace("_", " ").strip().title()
-            _add_field_row(table, f"Additional slide field - {label}", value)
+        row = overview.add_row()
+        for idx, width in enumerate(widths):
+            row.cells[idx].width = Inches(width)
+        left, right = row.cells
+        _shade_cell(left, PALE_GRAY)
+        _shade_cell(right, WHITE)
+        _set_cell_borders(left, BORDER_GRAY)
+        _set_cell_borders(right, BORDER_GRAY)
+        _set_cell_margins(left, 60, 90, 60, 90)
+        _set_cell_margins(right, 60, 90, 60, 90)
+        _write_cell_text(left, label, font_size=9.0, bold=True, color=TEXT_BLUE)
+        _write_cell_text(right, value or "[blank]", font_size=9.0, italic=not bool(value), color=TEXT_DARK if value else TEXT_MUTED)
+    doc.add_paragraph().paragraph_format.space_after = Pt(1)
 
-    # Keep any nonblank legacy visual-plan content so old saved presentations lose nothing.
-    if _safe_text(slide.get("visual_plan")):
-        _add_field_row(table, "Legacy visual / evidence plan", _safe_text(slide.get("visual_plan")))
+    _add_labeled_box(
+        doc,
+        "Overall mentor feedback",
+        "",
+        fill=PINK,
+        placeholder="Comment on the overall story, sequencing, omissions, and alignment between the objectives and the presentation.",
+        min_blank_lines=3,
+    )
 
-    _add_image_row(table, slide)
-    if _uploaded_slide_pptx_bytes(slide):
-        visual_layout = "Editable PPTX slide replacement"
-    elif _visual_image_bytes(slide):
-        visual_layout = "Whole-slide visual" if bool(slide.get("visual_full_slide", False)) else "Image used within slide layout"
+    _add_labeled_box(
+        doc,
+        "Suggested review approach",
+        "1. Does the presentation tell a clear story?\n2. Is each slide readable and necessary?\n3. Do the speaker notes create smooth transitions and accurate teaching points?\n4. Are images, data, and conclusions interpreted clearly?",
+        fill=PALE_BLUE,
+        border=BORDER_BLUE,
+        body_font_size=9.0,
+    )
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p.paragraph_format.space_before = Pt(1)
+    run = p.add_run(f"Generated with {APP_VERSION} · Use Track Changes or Word comments.")
+    run.font.name = DOC_FONT
+    run.font.size = Pt(7.5)
+    run.font.color.rgb = TEXT_MUTED
+
+
+def _slide_editable_text(deck: Dict[str, Any], slide: Dict[str, Any], index: int) -> str:
+    role = _safe_text(slide.get("role"))
+    kind = _safe_text(slide.get("slide_kind"))
+    meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
+    parts: List[str] = []
+
+    def add(label: str, value: Any) -> None:
+        text = _safe_text(value)
+        if text:
+            parts.append(f"{label}: {text}")
+
+    add("Title", slide_output_title(deck, slide, index))
+    add("Subtitle", slide.get("subtitle"))
+    add("Section label", slide.get("section_box_label"))
+
+    if role == "Title" or kind == "title":
+        add("Presenter", meta.get("presenter"))
+        add("Date", meta.get("session_date"))
+        add("Audience", meta.get("audience"))
+        add("Presentation type", meta.get("presentation_type"))
+        add("Core question", meta.get("core_question"))
+        add("Story arc", meta.get("story_arc"))
+    elif role == "Objectives" or kind == "objectives":
+        add("Intro", slide.get("objectives_intro"))
+        for number in range(1, 4):
+            verb = _safe_text(slide.get(f"objective_{number}_verb"))
+            sentence = _safe_text(slide.get(f"objective_{number}_text"))
+            if verb or sentence:
+                parts.append(f"Objective {number}: {verb}: {sentence}".replace(": :", ":"))
+        add("Bottom banner", slide.get("objectives_takeaway"))
+    elif role == "Take-home" or kind == "takehome":
+        for number in range(1, 6):
+            point = _safe_text(slide.get(f"takehome_point_{number}"))
+            if point:
+                parts.append(f"{number}. {point}")
     else:
-        visual_layout = "No uploaded visual"
-    _add_field_row(table, "Visual layout", visual_layout)
-    _add_field_row(table, "Discussion prompt", _safe_text(slide.get("discussion_prompt")))
-    _add_field_row(table, "Speaker notes", _safe_text(slide.get("speaker_notes")))
-    _add_field_row(table, "Mentor notes", "[Add comments here or use Word comments in the margin.]", PINK)
+        add("Slide text", slide.get("body"))
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    add("Discussion prompt", slide.get("discussion_prompt"))
+    return "\n".join(parts) or "[No editable on-slide wording entered in the app. Review the PowerPoint preview above.]"
+
+
+def _fit_image(image_bytes: bytes, max_width: float = 7.05, max_height: float = 3.95) -> Tuple[float, float]:
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            width_px, height_px = image.size
+        if not width_px or not height_px:
+            return max_width, max_height
+        ratio = width_px / height_px
+        box_ratio = max_width / max_height
+        if ratio >= box_ratio:
+            return max_width, max_width / ratio
+        return max_height * ratio, max_height
+    except Exception:
+        return max_width, max_height
+
+
+def _add_slide_preview(doc: Document, preview_bytes: bytes | None) -> None:
+    _add_section_bar(doc, "PowerPoint preview", fill=BLUE, font_size=9.8)
+    table = doc.add_table(rows=1, cols=1)
+    table.style = "Table Grid"
+    _lock_table_width(table, 7.35)
+    cell = table.cell(0, 0)
+    _shade_cell(cell, WHITE)
+    _set_cell_borders(cell, BORDER_BLUE)
+    _set_cell_margins(cell, 75, 75, 75, 75)
+    _clear_cell(cell)
+    paragraph = cell.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if preview_bytes:
+        width, height = _fit_image(preview_bytes)
+        run = paragraph.add_run()
+        run.add_picture(BytesIO(preview_bytes), width=Inches(width), height=Inches(height))
+    else:
+        run = paragraph.add_run("[PowerPoint preview could not be generated in this environment.]")
+        run.font.name = DOC_FONT
+        run.font.size = Pt(9)
+        run.font.italic = True
+        run.font.color.rgb = TEXT_MUTED
+    doc.add_paragraph().paragraph_format.space_after = Pt(1)
+
+
+def _add_slide_page(
+    doc: Document,
+    deck: Dict[str, Any],
+    slide: Dict[str, Any],
+    index: int,
+    total: int,
+    preview_bytes: bytes | None,
+) -> None:
+    title = slide_output_title(deck, slide, index)
+    _add_section_bar(doc, f"Slide {index} of {total} · {title}", fill=BLUE, font_size=11.5)
+
+    role = _safe_text(slide.get("role")) or "Slide"
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(3)
+    run = p.add_run(role)
+    run.font.name = DOC_FONT
+    run.font.size = Pt(8)
+    run.font.bold = True
+    run.font.color.rgb = TEXT_MUTED
+
+    _add_slide_preview(doc, preview_bytes or _fallback_visual_bytes(slide))
+    _add_labeled_box(
+        doc,
+        "Editable on-slide wording",
+        _slide_editable_text(deck, slide, index),
+        fill=PALE_BLUE,
+        body_font_size=9.0,
+    )
+    _add_labeled_box(
+        doc,
+        "Speaker notes",
+        _safe_text(slide.get("speaker_notes")),
+        fill=WHITE,
+        placeholder="[No speaker notes entered.]",
+        body_font_size=9.1,
+    )
+    _add_labeled_box(
+        doc,
+        "Mentor feedback",
+        "",
+        fill=PINK,
+        placeholder="Add comments on accuracy, clarity, slide design, transitions, or suggested revisions.",
+        min_blank_lines=3,
+        body_font_size=9.0,
+    )
 
 
 def _enable_track_changes(docx_stream: BytesIO) -> BytesIO:
-    """Open the generated mentor document with Track Changes enabled."""
     try:
         source = BytesIO(docx_stream.getvalue())
         target = BytesIO()
@@ -612,48 +430,53 @@ def _enable_track_changes(docx_stream: BytesIO) -> BytesIO:
         return docx_stream
 
 
-def build_mentor_review_docx(deck: Dict[str, Any]) -> bytes:
-    """Build an editable mentor review Word document."""
+def build_mentor_review_docx(deck: Dict[str, Any], pptx_bytes: bytes | None = None) -> bytes:
+    """Build the streamlined, editable mentor review document."""
+    if pptx_bytes is None:
+        try:
+            from pptx_builder import build_pptx
+            pptx_bytes = build_pptx(deck)
+        except Exception:
+            pptx_bytes = None
+
+    previews = render_pptx_slides_to_pngs(pptx_bytes or b"") if pptx_bytes else []
+
     doc = Document()
     section = doc.sections[0]
-    section.orientation = WD_ORIENT.PORTRAIT
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
-    section.top_margin = Inches(0.52)
-    section.bottom_margin = Inches(0.52)
+    section.top_margin = Inches(0.42)
+    section.bottom_margin = Inches(0.42)
     section.left_margin = Inches(0.55)
     section.right_margin = Inches(0.55)
 
     styles = doc.styles
     styles["Normal"].font.name = DOC_FONT
-    styles["Normal"].font.size = Pt(9.5)
+    styles["Normal"].font.size = Pt(9.2)
 
-    _add_title_block(doc, deck)
-    _add_presentation_overview(doc, deck)
-    _add_guidelines(doc)
-    _add_bloom_reference(doc)
+    _add_overview(doc, deck)
 
-    for idx, slide in enumerate(deck.get("slides", []), start=1):
-        if idx > 1:
-            doc.add_page_break()
-        _add_slide_review_block(doc, deck, slide, idx)
+    slides = deck.get("slides", []) if isinstance(deck, dict) else []
+    total = len(slides)
+    for index, slide in enumerate(slides, start=1):
+        doc.add_page_break()
+        preview = previews[index - 1] if index - 1 < len(previews) else None
+        _add_slide_page(doc, deck, slide, index, total, preview)
 
     output = BytesIO()
     doc.save(output)
     output.seek(0)
-    reviewed = _enable_track_changes(output)
-    return reviewed.getvalue()
+    return _enable_track_changes(output).getvalue()
 
 
 def mentor_docx_contains_complete_review_fields(docx_bytes: bytes) -> bool:
-    """Confirm that the current complete mentor-review template was generated."""
     required_labels = [
-        "Presentation plan and story arc",
-        "Core question / tension",
-        "Story arc",
-        "Overall mentor review",
+        "Presentation overview",
+        "PowerPoint preview",
+        "Editable on-slide wording",
         "Speaker notes",
-        f"Generated by Pediatric Residency Presentation Builder {APP_VERSION}",
+        "Mentor feedback",
+        f"Generated with {APP_VERSION}",
     ]
     try:
         with ZipFile(BytesIO(docx_bytes), "r") as zin:
@@ -664,32 +487,19 @@ def mentor_docx_contains_complete_review_fields(docx_bytes: bytes) -> bool:
 
 
 def build_plain_text_summary(deck: Dict[str, Any]) -> str:
-    """Complete text representation used by tests and future integrations."""
     meta = deck.get("metadata", {}) if isinstance(deck, dict) else {}
     parts = [identity_title(deck), identity_subtitle(deck), ""]
-    for key in [
-        "presentation_subtitle",
-        "core_question",
-        "story_arc",
-        "archive_notes",
-    ]:
+    for key in ("presentation_subtitle", "core_question", "story_arc", "archive_notes"):
         value = _safe_text(meta.get(key))
         if value:
             parts.append(f"{key}: {value}")
     parts.append("")
 
-    excluded = {"id", "visual_image", "uploaded_slide_pptx", "uploaded_slide_preview_image"}
-    for idx, slide in enumerate(deck.get("slides", []), start=1):
-        parts.append(f"Slide {idx}: {slide_output_title(deck, slide, idx)}")
-        for key, raw_value in slide.items():
-            if key in excluded:
-                continue
-            value = _safe_text(raw_value)
-            if value:
-                parts.append(f"{key}: {value}")
-        if _visual_image_bytes(slide):
-            parts.append("uploaded_visual: image")
-        if _uploaded_slide_pptx_bytes(slide):
-            parts.append("uploaded_visual: editable PPTX replacement")
+    for index, slide in enumerate(deck.get("slides", []), start=1):
+        parts.append(f"Slide {index}: {slide_output_title(deck, slide, index)}")
+        parts.append(_slide_editable_text(deck, slide, index))
+        notes = _safe_text(slide.get("speaker_notes"))
+        if notes:
+            parts.append(f"speaker_notes: {notes}")
         parts.append("")
     return "\n".join(parts)
