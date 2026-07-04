@@ -140,3 +140,6 @@ Update v5.10: increased uploaded image and PPTX preview sizes slightly in both t
 
 
 Update v5.11: new presentation scaffolds now place Disclosures immediately after the Title slide, followed by Objectives.
+
+
+Update v5.12: increased all speaker-note text areas in the app. Standard slides use a 260 px note box; title, objectives, disclosures, and take-home slides use a 220 px note box.

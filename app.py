@@ -581,7 +581,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     render_visual_upload(slide)
 
     slide["title"] = meta.get("presentation_title", "")
-    slide["speaker_notes"] = widget_text(slide, "speaker_notes", "Speaker notes for title slide", height=90, multiline=True)
+    slide["speaker_notes"] = widget_text(slide, "speaker_notes", "Speaker notes for title slide", height=220, multiline=True)
 
 
 def render_objectives_editor(slide: Dict[str, Any]) -> None:
@@ -634,7 +634,7 @@ def render_objectives_editor(slide: Dict[str, Any]) -> None:
     st.markdown("#### Optional objective-slide visual")
     st.caption("If you upload a visual and check whole-slide mode, the visual can take over the objectives slide in the exported PowerPoint.")
     render_visual_upload(slide)
-    widget_text(slide, "speaker_notes", "Speaker notes", height=120, multiline=True)
+    widget_text(slide, "speaker_notes", "Speaker notes", height=220, multiline=True)
 
 
 def render_takehome_editor(slide: Dict[str, Any]) -> None:
@@ -660,15 +660,15 @@ def render_takehome_editor(slide: Dict[str, Any]) -> None:
     st.markdown("#### Optional slide visual")
     st.caption("Upload an image for the right side of the take-home slide. If you check whole-slide mode, the visual can take over the slide body instead.")
     render_visual_upload(slide)
-    widget_text(slide, "discussion_prompt", "Optional discussion prompt at bottom", height=90, multiline=True, help_text="Optional closing question or prompt shown near the bottom of the take-home slide.")
-    widget_text(slide, "speaker_notes", "Speaker notes", height=120, multiline=True)
+    widget_text(slide, "discussion_prompt", "Optional discussion prompt at bottom", height=220, multiline=True, help_text="Optional closing question or prompt shown near the bottom of the take-home slide.")
+    widget_text(slide, "speaker_notes", "Speaker notes", height=220, multiline=True)
 
 
 def render_disclosures_editor(slide: Dict[str, Any]) -> None:
     st.markdown("### Disclosures")
     widget_text(slide, "title", "Slide title")
-    widget_text(slide, "body", "Disclosure text", height=120, multiline=True)
-    widget_text(slide, "speaker_notes", "Speaker notes", height=100, multiline=True)
+    widget_text(slide, "body", "Disclosure text", height=220, multiline=True)
+    widget_text(slide, "speaker_notes", "Speaker notes", height=220, multiline=True)
 
 
 def move_slide(deck: Dict[str, Any], slide: Dict[str, Any], direction: int) -> None:
@@ -842,7 +842,7 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     render_visual_upload(slide)
 
     widget_text(slide, "discussion_prompt", "Discussion prompt", height=125, multiline=True, help_text="Question to ask the audience, if useful.")
-    widget_text(slide, "speaker_notes", "Speaker notes exported into PowerPoint", height=170, multiline=True)
+    widget_text(slide, "speaker_notes", "Speaker notes exported into PowerPoint", height=260, multiline=True)
 
 
 def render_slide_editor(deck: Dict[str, Any]) -> None:
