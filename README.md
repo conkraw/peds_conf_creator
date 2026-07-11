@@ -179,3 +179,6 @@ Update v5.21: persistent green success alerts are disabled by default through SH
 - Expensive export functions are cached with bounded Streamlit caches.
 - Uploaded PPTX files are fingerprinted, so the same retained file is not reconverted every time the user edits another field.
 - PPTX previews are generated once after a new upload; older saved files without previews use an explicit Generate Preview button.
+
+
+Update v5.23: fixed backward-compatible loading of older GitHub JSON presentations. Export signatures no longer mutate base64 asset dictionaries while iterating, preventing the “dictionary changed size during iteration” RuntimeError. Missing asset hashes are backfilled safely once when needed so the optimized export-staleness checks remain fast.

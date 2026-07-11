@@ -91,19 +91,26 @@ def serialize_deck_for_export(deck: Dict[str, Any]) -> str:
 
 
 def _signature_view(value: Any, parent_key: str = "") -> Any:
-    """Create a lightweight export fingerprint without serializing large previews."""
+    """Create a lightweight export fingerprint without mutating the deck.
+
+    Older GitHub JSON files may contain base64 assets without a stored SHA-256
+    value. The previous implementation added that value while iterating through
+    the same dictionary, which raised ``RuntimeError: dictionary changed size
+    during iteration``. This version takes a stable snapshot of the items and
+    computes any fallback digest locally.
+    """
     if isinstance(value, dict):
         result: Dict[str, Any] = {}
-        for key, item in value.items():
+        existing_digest = str(value.get("sha256", "") or "").strip()
+        for key, item in list(value.items()):
             # Cached UI previews do not change the exported PPTX or mentor content.
             if key == "uploaded_slide_preview_image":
                 continue
             if key == "data_base64":
-                encoded = str(item or "")
-                digest = str(value.get("sha256", "") or "").strip()
+                encoded = item if isinstance(item, str) else str(item or "")
+                digest = existing_digest
                 if not digest and encoded:
                     digest = hashlib.sha256(encoded.encode("ascii", errors="ignore")).hexdigest()
-                    value["sha256"] = digest
                 result[key] = {"characters": len(encoded), "sha256": digest}
             else:
                 result[key] = _signature_view(item, key)
@@ -113,7 +120,35 @@ def _signature_view(value: Any, parent_key: str = "") -> Any:
     return value
 
 
+def ensure_deck_asset_hashes(deck: Dict[str, Any]) -> None:
+    """Backfill hashes for assets loaded from older JSON files once per load.
+
+    Current uploads already store a SHA-256 value. Older archives often do not.
+    Backfilling here keeps subsequent export-signature checks fast while leaving
+    preview-only images out of the export fingerprint.
+    """
+    for slide in deck.get("slides", []):
+        if not isinstance(slide, dict):
+            continue
+        for asset_key in ("visual_image", "uploaded_slide_pptx"):
+            asset = slide.get(asset_key)
+            if not isinstance(asset, dict):
+                continue
+            if str(asset.get("sha256", "") or "").strip():
+                continue
+            encoded = asset.get("data_base64")
+            if not isinstance(encoded, str) or not encoded:
+                continue
+            try:
+                asset["sha256"] = hashlib.sha256(base64.b64decode(encoded)).hexdigest()
+            except Exception:
+                # A malformed legacy asset should not prevent the presentation
+                # itself from loading or the rest of the app from rendering.
+                continue
+
+
 def deck_export_signature(deck: Dict[str, Any]) -> str:
+    ensure_deck_asset_hashes(deck)
     signature_json = json.dumps(
         _signature_view(deck),
         sort_keys=True,
