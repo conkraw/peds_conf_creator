@@ -169,3 +169,13 @@ Update v5.20:
 
 
 Update v5.21: persistent green success alerts are disabled by default through SHOW_SUCCESS_ALERTS=False. Archive actions use brief toasts, successful readiness checks are silent, and failed readiness checks show a single error with an actionable issue/location list.
+
+
+## Update v5.22 — performance / lazy generation
+
+- PowerPoint and mentor DOCX files are no longer rebuilt on every Streamlit rerun.
+- The export panel now uses **Prepare / Refresh** buttons and keeps prepared files in session state until the deck changes.
+- GitHub Save generates current exports only when the user clicks Save.
+- Expensive export functions are cached with bounded Streamlit caches.
+- Uploaded PPTX files are fingerprinted, so the same retained file is not reconverted every time the user edits another field.
+- PPTX previews are generated once after a new upload; older saved files without previews use an explicit Generate Preview button.

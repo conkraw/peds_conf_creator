@@ -16,7 +16,9 @@ There are no local JSON draft uploads/downloads. GitHub is the source of truth.
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
+import json
 import re
 from typing import Any, Dict, List
 
@@ -40,7 +42,6 @@ from deck_model import (
     short_label,
     split_nonempty_lines,
 )
-from docx_builder import build_mentor_review_docx, mentor_docx_contains_complete_review_fields
 from github_storage import (
     GitHubStorageError,
     github_is_configured,
@@ -50,8 +51,6 @@ from github_storage import (
     save_archive_to_github,
     delete_archive_from_github,
 )
-from pptx_builder import build_pptx
-from preview_utils import render_pptx_first_slide_to_png
 
 
 def objective_verb_options() -> List[str]:
@@ -84,6 +83,75 @@ def success_notice(message: str, *, action: bool = False) -> None:
         st.success(message)
     elif action and SHOW_ACTION_TOASTS:
         st.toast(message, icon="✅")
+
+
+def serialize_deck_for_export(deck: Dict[str, Any]) -> str:
+    """Return a stable JSON snapshot used for export caching and staleness checks."""
+    return json.dumps(deck, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _signature_view(value: Any, parent_key: str = "") -> Any:
+    """Create a lightweight export fingerprint without serializing large previews."""
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for key, item in value.items():
+            # Cached UI previews do not change the exported PPTX or mentor content.
+            if key == "uploaded_slide_preview_image":
+                continue
+            if key == "data_base64":
+                encoded = str(item or "")
+                digest = str(value.get("sha256", "") or "").strip()
+                if not digest and encoded:
+                    digest = hashlib.sha256(encoded.encode("ascii", errors="ignore")).hexdigest()
+                    value["sha256"] = digest
+                result[key] = {"characters": len(encoded), "sha256": digest}
+            else:
+                result[key] = _signature_view(item, key)
+        return result
+    if isinstance(value, list):
+        return [_signature_view(item, parent_key) for item in value]
+    return value
+
+
+def deck_export_signature(deck: Dict[str, Any]) -> str:
+    signature_json = json.dumps(
+        _signature_view(deck),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(signature_json.encode("utf-8")).hexdigest()
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def cached_build_pptx(deck_json: str) -> bytes:
+    """Cache expensive PowerPoint generation across reruns and repeated requests."""
+    from pptx_builder import build_pptx
+
+    return build_pptx(json.loads(deck_json))
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def cached_build_mentor_docx(deck_json: str, pptx_bytes: bytes) -> bytes:
+    """Cache mentor DOCX generation, including slide-preview rendering."""
+    from docx_builder import build_mentor_review_docx
+
+    return build_mentor_review_docx(json.loads(deck_json), pptx_bytes=pptx_bytes)
+
+
+@st.cache_data(show_spinner=False, max_entries=24)
+def cached_render_pptx_first_slide(pptx_bytes: bytes) -> bytes | None:
+    """Render an uploaded PPTX preview once, rather than on every Streamlit rerun."""
+    from preview_utils import render_pptx_first_slide_to_png
+
+    return render_pptx_first_slide_to_png(pptx_bytes)
+
+
+def mentor_docx_is_complete(docx_bytes: bytes) -> bool:
+    from docx_builder import mentor_docx_contains_complete_review_fields
+
+    return mentor_docx_contains_complete_review_fields(docx_bytes)
 
 
 # -----------------------------------------------------------------------------
@@ -120,6 +188,14 @@ def initialize_state() -> None:
         st.session_state.archive_path = ""
     if "archive_results" not in st.session_state:
         st.session_state.archive_results = []
+    if "prepared_pptx_bytes" not in st.session_state:
+        st.session_state.prepared_pptx_bytes = None
+    if "prepared_pptx_signature" not in st.session_state:
+        st.session_state.prepared_pptx_signature = ""
+    if "prepared_mentor_docx_bytes" not in st.session_state:
+        st.session_state.prepared_mentor_docx_bytes = None
+    if "prepared_mentor_signature" not in st.session_state:
+        st.session_state.prepared_mentor_signature = ""
 
 
 def get_selected_slide(deck: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,7 +289,7 @@ def ensure_uploaded_slide_preview(slide: Dict[str, Any]) -> bytes | None:
     pptx_bytes = uploaded_slide_pptx_bytes(slide)
     if not pptx_bytes:
         return None
-    preview = render_pptx_first_slide_to_png(pptx_bytes)
+    preview = cached_render_pptx_first_slide(pptx_bytes)
     if preview:
         filename = get_uploaded_slide_pptx(slide).get("filename", "uploaded_slide.pptx")
         stem = filename.rsplit('.', 1)[0]
@@ -240,8 +316,31 @@ def count_pptx_slides(pptx_bytes: bytes | None) -> int:
         return 0
 
 
+def asset_sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def stored_asset_sha256(asset: Dict[str, Any]) -> str:
+    existing = str(asset.get("sha256", "") or "").strip()
+    if existing:
+        return existing
+    encoded = asset.get("data_base64")
+    if not encoded:
+        return ""
+    try:
+        digest = asset_sha256(base64.b64decode(encoded))
+        asset["sha256"] = digest
+        return digest
+    except Exception:
+        return ""
+
+
 def has_uploaded_visual(slide: Dict[str, Any]) -> bool:
-    return visual_image_bytes(slide) is not None or uploaded_slide_pptx_bytes(slide) is not None
+    """Check visual presence without decoding large base64 payloads."""
+    return bool(
+        get_visual_image(slide).get("data_base64")
+        or get_uploaded_slide_pptx(slide).get("data_base64")
+    )
 
 
 def slide_nav_label(index: int, slide: Dict[str, Any]) -> str:
@@ -759,7 +858,7 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
-    """Store one optional uploaded asset per slide: image or PPTX slide."""
+    """Store one optional uploaded asset without reprocessing it on every rerun."""
     st.caption("Optional: upload a PNG/JPEG image or a PPTX file. Images can appear beside text or fill the slide. A PPTX upload imports the first slide as editable PowerPoint objects when possible.")
     nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
     nonce = nonce_map.get(slide["id"], 0)
@@ -769,50 +868,70 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
         key=f"widget__{slide['id']}__visual_file__{nonce}",
         help="Use an image for a figure, screenshot, or diagram. Use a PPTX when you already built a polished slide and want the first slide imported as editable PowerPoint objects.",
     )
+
     if uploaded is not None:
         data = uploaded.getvalue()
-        is_pptx = (uploaded.type == "application/vnd.openxmlformats-officedocument.presentationml.presentation") or uploaded.name.lower().endswith(".pptx")
-        max_mb = 15 if is_pptx else 5
-        if len(data) > max_mb * 1024 * 1024:
-            st.error(f"This file is larger than {max_mb} MB. Please compress it before uploading.")
-        else:
-            if is_pptx:
+        upload_hash = asset_sha256(data)
+        is_pptx = (
+            uploaded.type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            or uploaded.name.lower().endswith(".pptx")
+        )
+        stored_asset = get_uploaded_slide_pptx(slide) if is_pptx else get_visual_image(slide)
+        already_processed = stored_asset_sha256(stored_asset) == upload_hash
+
+        # Streamlit retains the uploaded file across reruns. Only process it when
+        # the actual file changes; otherwise PPTX previews would be reconverted
+        # every time the user types in any field.
+        if not already_processed:
+            max_mb = 15 if is_pptx else 5
+            if len(data) > max_mb * 1024 * 1024:
+                st.error(f"This file is larger than {max_mb} MB. Please compress it before uploading.")
+            elif is_pptx:
                 slide_count = count_pptx_slides(data)
                 slide["uploaded_slide_pptx"] = {
                     "filename": uploaded.name,
                     "content_type": uploaded.type or "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     "slide_count": slide_count,
+                    "sha256": upload_hash,
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
                 slide["visual_image"] = {}
                 slide["visual_full_slide"] = False
                 slide["uploaded_slide_preview_image"] = {}
-                preview_bytes = ensure_uploaded_slide_preview(slide)
-                if preview_bytes:
-                    success_notice(f"Stored PPTX slide replacement: {uploaded.name}. First slide will be imported as editable PowerPoint objects in exports, and a preview image was generated.")
-                else:
-                    st.warning(f"Stored PPTX slide replacement: {uploaded.name}. The slide will still export as editable PowerPoint objects, but preview generation was not available right now.")
+                with st.spinner("Generating the PPTX preview once…"):
+                    preview_bytes = ensure_uploaded_slide_preview(slide)
+                if not preview_bytes:
+                    st.warning("The editable PPTX was stored, but its preview could not be generated. You can retry below.")
             else:
                 slide["visual_image"] = {
                     "filename": uploaded.name,
                     "content_type": uploaded.type or "image/png",
+                    "sha256": upload_hash,
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
                 slide["uploaded_slide_pptx"] = {}
                 slide["uploaded_slide_preview_image"] = {}
-                success_notice(f"Stored image visual: {uploaded.name}.")
 
     pptx_info = get_uploaded_slide_pptx(slide)
     pptx_bytes = uploaded_slide_pptx_bytes(slide)
     if pptx_bytes:
         slide_count = pptx_info.get("slide_count") or count_pptx_slides(pptx_bytes)
-        slide_word = "slide" if slide_count == 1 else "slides"
-        success_notice(f"PPTX replacement active: {pptx_info.get('filename', 'slide.pptx')} ({slide_count or 'unknown'} {slide_word}). The first slide will be imported as editable PowerPoint objects in the exported PowerPoint. Complex animations/transitions may not import.")
-        preview_bytes = ensure_uploaded_slide_preview(slide)
+        preview_bytes = uploaded_slide_preview_bytes(slide)
         if preview_bytes:
             st.image(preview_bytes, caption=f"Preview of first slide: {pptx_info.get('filename', 'slide.pptx')}", width=420)
         else:
-            st.info("Preview image is not available yet for this PPTX. The editable PPTX replacement will still export.")
+            if st.button(
+                "Generate PPTX preview",
+                key=f"widget__{slide['id']}__generate_pptx_preview",
+                use_container_width=True,
+            ):
+                with st.spinner("Generating preview…"):
+                    preview_bytes = ensure_uploaded_slide_preview(slide)
+                if preview_bytes:
+                    st.rerun()
+                else:
+                    st.error("The preview could not be generated. The editable PPTX can still be exported and downloaded.")
+
         st.download_button(
             "Download uploaded PPTX",
             data=pptx_bytes,
@@ -935,62 +1054,123 @@ def render_slide_editor(deck: Dict[str, Any]) -> None:
 # -----------------------------------------------------------------------------
 
 
+def clear_stale_prepared_exports(current_signature: str) -> None:
+    """Drop stale session copies as soon as the deck changes."""
+    if st.session_state.get("prepared_pptx_signature") != current_signature:
+        st.session_state.prepared_pptx_bytes = None
+        st.session_state.prepared_pptx_signature = ""
+    if st.session_state.get("prepared_mentor_signature") != current_signature:
+        st.session_state.prepared_mentor_docx_bytes = None
+        st.session_state.prepared_mentor_signature = ""
+
+
+def prepare_pptx_export(deck: Dict[str, Any], current_signature: str) -> bytes:
+    deck_json = serialize_deck_for_export(deck)
+    pptx_bytes = cached_build_pptx(deck_json)
+    st.session_state.prepared_pptx_bytes = pptx_bytes
+    st.session_state.prepared_pptx_signature = current_signature
+    return pptx_bytes
+
+
+def prepare_mentor_export(deck: Dict[str, Any], current_signature: str) -> bytes:
+    pptx_bytes = st.session_state.get("prepared_pptx_bytes")
+    if st.session_state.get("prepared_pptx_signature") != current_signature or not pptx_bytes:
+        pptx_bytes = prepare_pptx_export(deck, current_signature)
+    deck_json = serialize_deck_for_export(deck)
+    mentor_bytes = cached_build_mentor_docx(deck_json, pptx_bytes)
+    st.session_state.prepared_mentor_docx_bytes = mentor_bytes
+    st.session_state.prepared_mentor_signature = current_signature
+    return mentor_bytes
+
+
 def render_export_panel(deck: Dict[str, Any]) -> None:
-    """Render stacked export/archive controls in the right-side panel."""
-    try:
-        pptx_bytes = build_pptx(deck)
-        mentor_docx_bytes = build_mentor_review_docx(deck, pptx_bytes=pptx_bytes)
-    except Exception as exc:
-        st.error(f"Could not build exports: {exc}")
-        return
+    """Render lazy export controls so normal editing reruns stay fast."""
+    current_signature = deck_export_signature(deck)
+    clear_stale_prepared_exports(current_signature)
 
     st.markdown("### Export / archive")
-
-    pptx_replacements = []
-    for idx, slide in enumerate(deck.get("slides", []), start=1):
-        pptx_info = get_uploaded_slide_pptx(slide)
-        if pptx_info.get("data_base64"):
-            pptx_replacements.append(f"Slide {idx}: {pptx_info.get('filename', 'uploaded slide.pptx')}")
-    if pptx_replacements:
-        success_notice("Editable PPTX slide replacement active: " + "; ".join(pptx_replacements))
+    st.caption("Exports are generated only when requested so editing and slide navigation stay responsive.")
 
     with st.container(border=True):
         st.markdown("#### Mentor Word document")
-        st.caption("Journal-club-style review: compact PowerPoint previews, editable on-slide wording, full speaker notes, and mentor comment boxes in a portrait table format.")
-        complete_mentor_doc = mentor_docx_contains_complete_review_fields(mentor_docx_bytes)
-        if complete_mentor_doc:
-            success_notice(f"Compact table-based mentor review active ({APP_VERSION}): PowerPoint previews, editable wording, full speaker notes, and feedback areas are included.")
-        else:
-            st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
-        mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")
-        st.download_button(
-            "Download mentor DOCX",
-            data=mentor_docx_bytes,
-            file_name=f"mentor_review_{mentor_version}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-            disabled=not complete_mentor_doc,
+        st.caption("Compact PowerPoint previews, editable wording, full speaker notes, and mentor comment boxes.")
+        mentor_ready = (
+            st.session_state.get("prepared_mentor_signature") == current_signature
+            and bool(st.session_state.get("prepared_mentor_docx_bytes"))
         )
+        if st.button(
+            "Refresh mentor DOCX" if mentor_ready else "Prepare mentor DOCX",
+            use_container_width=True,
+            key="prepare_mentor_docx",
+        ):
+            try:
+                with st.spinner("Preparing the mentor review…"):
+                    prepare_mentor_export(deck, current_signature)
+                mentor_ready = True
+            except Exception as exc:
+                st.error(f"Could not build the mentor DOCX: {exc}")
+                mentor_ready = False
+
+        mentor_docx_bytes = st.session_state.get("prepared_mentor_docx_bytes") if mentor_ready else None
+        if mentor_docx_bytes:
+            complete_mentor_doc = mentor_docx_is_complete(mentor_docx_bytes)
+            if not complete_mentor_doc:
+                st.error("The mentor DOCX did not pass the complete-template check. Redeploy all app files before downloading.")
+            mentor_version = APP_VERSION.rsplit("-", 1)[-1].replace(".", "_")
+            st.download_button(
+                "Download mentor DOCX",
+                data=mentor_docx_bytes,
+                file_name=f"mentor_review_{mentor_version}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+                disabled=not complete_mentor_doc,
+            )
 
     with st.container(border=True):
         st.markdown("#### PowerPoint")
-        st.caption("All slides export automatically. Speaker notes go into real PowerPoint notes.")
-        st.download_button(
-            "Download PPTX",
-            data=pptx_bytes,
-            file_name=ARCHIVE_PPTX_NAME,
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            use_container_width=True,
+        st.caption("Speaker notes are placed into the real PowerPoint notes section.")
+        pptx_ready = (
+            st.session_state.get("prepared_pptx_signature") == current_signature
+            and bool(st.session_state.get("prepared_pptx_bytes"))
         )
+        if st.button(
+            "Refresh PPTX" if pptx_ready else "Prepare PPTX",
+            use_container_width=True,
+            key="prepare_pptx",
+        ):
+            try:
+                with st.spinner("Preparing the PowerPoint…"):
+                    prepare_pptx_export(deck, current_signature)
+                pptx_ready = True
+            except Exception as exc:
+                st.error(f"Could not build the PowerPoint: {exc}")
+                pptx_ready = False
+
+        pptx_bytes = st.session_state.get("prepared_pptx_bytes") if pptx_ready else None
+        if pptx_bytes:
+            st.download_button(
+                "Download PPTX",
+                data=pptx_bytes,
+                file_name=ARCHIVE_PPTX_NAME,
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True,
+            )
 
     with st.container(border=True):
         st.markdown("#### GitHub archive")
-        st.caption("Saves draft.json, presentation.pptx, and mentor_review.docx to GitHub.")
+        st.caption("Builds the current files only when Save is clicked, then stores the draft, PPTX, and mentor DOCX.")
         if st.button("Save all to GitHub", use_container_width=True):
             try:
-                results = save_archive_to_github(deck, pptx_bytes, mentor_docx_bytes, st.session_state.get("archive_path", ""))
+                with st.spinner("Preparing current exports and saving to GitHub…"):
+                    pptx_bytes = prepare_pptx_export(deck, current_signature)
+                    mentor_docx_bytes = prepare_mentor_export(deck, current_signature)
+                    results = save_archive_to_github(
+                        deck,
+                        pptx_bytes,
+                        mentor_docx_bytes,
+                        st.session_state.get("archive_path", ""),
+                    )
                 if results:
-                    # Path looks like base/date_presenter_title/file.ext; archive folder is the parent.
                     st.session_state.archive_path = results[0].path.rsplit("/", 1)[0]
                 success_notice("Saved to GitHub archive.", action=True)
                 saved_file_names = [result.path.rsplit("/", 1)[-1] for result in results if result.html_url]
@@ -998,6 +1178,8 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
                     st.caption("Saved files: " + ", ".join(saved_file_names))
             except GitHubStorageError as exc:
                 st.error(str(exc))
+            except Exception as exc:
+                st.error(f"Could not prepare or save the current presentation: {exc}")
 
 
 # -----------------------------------------------------------------------------
