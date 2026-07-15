@@ -182,3 +182,6 @@ Update v5.21: persistent green success alerts are disabled by default through SH
 
 
 Update v5.23: fixed backward-compatible loading of older GitHub JSON presentations. Export signatures no longer mutate base64 asset dictionaries while iterating, preventing the “dictionary changed size during iteration” RuntimeError. Missing asset hashes are backfilled safely once when needed so the optimized export-staleness checks remain fast.
+
+
+Update v5.24: added lightweight GitHub autosave modeled after the case-conference workflow. The app saves only draft.json when the user changes slides and immediately after structural changes or visual uploads/removals. PPTX and mentor DOCX exports are not rebuilt during autosave, preserving the v5.22/v5.23 performance improvements. Autosave is enabled with AUTOSAVE_ENABLED = True in app.py and can be disabled there if needed.

@@ -49,6 +49,7 @@ from github_storage import (
     list_archives_from_github,
     load_json_from_github,
     save_archive_to_github,
+    save_draft_to_github,
     delete_archive_from_github,
 )
 
@@ -75,6 +76,12 @@ SHOW_SUCCESS_ALERTS = False
 
 # User-triggered archive actions still receive a brief, non-persistent toast.
 SHOW_ACTION_TOASTS = True
+
+# Lightweight autosave: only draft.json is saved. PPTX and mentor DOCX remain
+# explicit actions so autosave does not slow editing by rebuilding exports.
+AUTOSAVE_ENABLED = True
+AUTOSAVE_ON_SLIDE_CHANGE = True
+AUTOSAVE_FAILURE_TOASTS = True
 
 
 def success_notice(message: str, *, action: bool = False) -> None:
@@ -159,6 +166,61 @@ def deck_export_signature(deck: Dict[str, Any]) -> str:
     return hashlib.sha256(signature_json.encode("utf-8")).hexdigest()
 
 
+def reset_autosave_tracking(deck: Dict[str, Any], *, mark_clean: bool = True) -> None:
+    """Reset autosave state after loading or starting a presentation."""
+    st.session_state.autosave_file_sha = ""
+    st.session_state.autosave_last_error = ""
+    st.session_state.autosave_last_signature = deck_export_signature(deck) if mark_clean else ""
+
+
+def autosave_current_draft(*, reason: str = "presentation change", force: bool = False) -> bool:
+    """Save the current JSON draft to GitHub without rebuilding exports.
+
+    Autosave is deliberately tied to navigation and structural changes rather
+    than every keystroke. This matches the case-conference workflow while
+    keeping the app responsive and avoiding excessive GitHub commits.
+    """
+    if not AUTOSAVE_ENABLED or not github_is_configured():
+        return False
+    if st.session_state.get("autosave_in_progress", False):
+        return False
+
+    deck = st.session_state.get("deck")
+    if not isinstance(deck, dict):
+        return False
+
+    current_signature = deck_export_signature(deck)
+    if not force and current_signature == st.session_state.get("autosave_last_signature", ""):
+        return True
+
+    st.session_state.autosave_in_progress = True
+    try:
+        result = save_draft_to_github(
+            deck,
+            st.session_state.get("archive_path", ""),
+            known_sha=st.session_state.get("autosave_file_sha", ""),
+            commit_message=f"Autosave presentation draft: {reason}",
+        )
+        st.session_state.archive_path = result.path.rsplit("/", 1)[0]
+        st.session_state.autosave_file_sha = result.file_sha
+        st.session_state.autosave_last_signature = current_signature
+        st.session_state.autosave_last_error = ""
+        return True
+    except Exception as exc:
+        message = str(exc)
+        previous_error = st.session_state.get("autosave_last_error", "")
+        # A cached GitHub file SHA may become stale if the archive changes in
+        # another browser/session. Clear it so the next autosave refreshes the
+        # current SHA before trying again.
+        st.session_state.autosave_file_sha = ""
+        st.session_state.autosave_last_error = message
+        if AUTOSAVE_FAILURE_TOASTS and message != previous_error:
+            st.toast("Autosave could not reach GitHub. Your current session is still intact.", icon="⚠️")
+        return False
+    finally:
+        st.session_state.autosave_in_progress = False
+
+
 @st.cache_data(show_spinner=False, max_entries=8)
 def cached_build_pptx(deck_json: str) -> bytes:
     """Cache expensive PowerPoint generation across reruns and repeated requests."""
@@ -231,6 +293,14 @@ def initialize_state() -> None:
         st.session_state.prepared_mentor_docx_bytes = None
     if "prepared_mentor_signature" not in st.session_state:
         st.session_state.prepared_mentor_signature = ""
+    if "autosave_last_signature" not in st.session_state:
+        st.session_state.autosave_last_signature = deck_export_signature(st.session_state.deck)
+    if "autosave_file_sha" not in st.session_state:
+        st.session_state.autosave_file_sha = ""
+    if "autosave_last_error" not in st.session_state:
+        st.session_state.autosave_last_error = ""
+    if "autosave_in_progress" not in st.session_state:
+        st.session_state.autosave_in_progress = False
 
 
 def get_selected_slide(deck: Dict[str, Any]) -> Dict[str, Any]:
@@ -252,7 +322,10 @@ def sync_selected_slide_from_radio() -> None:
     """
     selected = st.session_state.get("selected_slide_radio")
     slide_ids = [slide.get("id") for slide in st.session_state.deck.get("slides", [])]
+    current = st.session_state.get("selected_slide_id")
     if selected in slide_ids:
+        if AUTOSAVE_ON_SLIDE_CHANGE and selected != current:
+            autosave_current_draft(reason="slide change")
         st.session_state.selected_slide_id = selected
 
 
@@ -629,12 +702,14 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                     if st.button("Add after", use_container_width=True):
                         slide = new_slide(new_role, new_title, new_prompt)
                         deck["slides"].insert(selected_index + 1, slide)
+                        autosave_current_draft(reason="slide added", force=True)
                         queue_slide_selection(slide["id"])
                         st.rerun()
                 with col2:
                     if st.button("Add at end", use_container_width=True):
                         slide = new_slide(new_role, new_title, new_prompt)
                         deck["slides"].append(slide)
+                        autosave_current_draft(reason="slide added", force=True)
                         queue_slide_selection(slide["id"])
                         st.rerun()
 
@@ -648,6 +723,8 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
             with st.container(border=True):
                 if not github_is_configured():
                     st.warning(github_status_message())
+                elif AUTOSAVE_ENABLED:
+                    st.caption("Autosave is active: draft.json saves when you change slides. PPTX and mentor DOCX save only with Save all to GitHub.")
 
                 search_text = st.text_input("Search archive", placeholder="presenter, title, or date")
                 if st.button("Find saved presentations", use_container_width=True):
@@ -681,6 +758,7 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                             payload = load_json_from_github(selected_path)
                             st.session_state.deck = normalize_loaded_deck(payload)
                             st.session_state.archive_path = payload.get("archive_path", selected_path)
+                            reset_autosave_tracking(st.session_state.deck, mark_clean=True)
                             queue_slide_selection(st.session_state.deck["slides"][0]["id"])
                             clear_widget_state()
                             success_notice("Loaded from GitHub.", action=True)
@@ -718,8 +796,9 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
         st.divider()
         if st.button("Start blank presentation", use_container_width=True):
             st.session_state.deck = default_deck()
-            queue_slide_selection(st.session_state.deck["slides"][0]["id"])
             st.session_state.archive_path = ""
+            reset_autosave_tracking(st.session_state.deck, mark_clean=True)
+            queue_slide_selection(st.session_state.deck["slides"][0]["id"])
             clear_widget_state()
             st.rerun()
 
@@ -762,6 +841,7 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         )
         if st.button("Replace story scaffold with this type", use_container_width=True):
             deck["slides"] = default_deck(meta["presentation_type"])["slides"]
+            autosave_current_draft(reason="story scaffold replaced", force=True)
             queue_slide_selection(deck["slides"][0]["id"])
             clear_widget_state()
             st.rerun()
@@ -947,6 +1027,8 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                 slide["uploaded_slide_pptx"] = {}
                 slide["uploaded_slide_preview_image"] = {}
 
+            autosave_current_draft(reason="visual uploaded", force=True)
+
     pptx_info = get_uploaded_slide_pptx(slide)
     pptx_bytes = uploaded_slide_pptx_bytes(slide)
     if pptx_bytes:
@@ -980,6 +1062,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
             slide["uploaded_slide_preview_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
+            autosave_current_draft(reason="visual removed", force=True)
             st.rerun()
         return
 
@@ -1006,6 +1089,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
             slide["uploaded_slide_preview_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
+            autosave_current_draft(reason="visual removed", force=True)
             st.rerun()
     else:
         slide["visual_full_slide"] = False
@@ -1024,20 +1108,24 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     with action_cols[0]:
         if st.button("Move up", use_container_width=True, disabled=slide_index == 1):
             move_slide(deck, slide, -1)
+            autosave_current_draft(reason="slide moved", force=True)
             st.rerun()
     with action_cols[1]:
         if st.button("Move down", use_container_width=True, disabled=slide_index == len(deck["slides"])):
             move_slide(deck, slide, 1)
+            autosave_current_draft(reason="slide moved", force=True)
             st.rerun()
     with action_cols[2]:
         if st.button("Duplicate", use_container_width=True):
             duplicate_slide(deck, slide)
+            autosave_current_draft(reason="slide duplicated", force=True)
             st.rerun()
     with action_cols[3]:
         if st.button("Delete", use_container_width=True, disabled=bool(slide.get("required", False))):
             deck["slides"].remove(slide)
             queue_slide_selection(deck["slides"][max(0, slide_index - 2)]["id"])
             clear_widget_state()
+            autosave_current_draft(reason="slide deleted", force=True)
             st.rerun()
 
     col1, col2 = st.columns([1, 1])
@@ -1207,6 +1295,9 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
                     )
                 if results:
                     st.session_state.archive_path = results[0].path.rsplit("/", 1)[0]
+                    st.session_state.autosave_file_sha = results[0].file_sha
+                    st.session_state.autosave_last_signature = current_signature
+                    st.session_state.autosave_last_error = ""
                 success_notice("Saved to GitHub archive.", action=True)
                 saved_file_names = [result.path.rsplit("/", 1)[-1] for result in results if result.html_url]
                 if saved_file_names:

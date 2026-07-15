@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -23,6 +24,7 @@ class GitHubFileResult:
     path: str
     html_url: str
     commit_sha: str
+    file_sha: str = ""
 
 
 def _read_github_config() -> Dict[str, str]:
@@ -79,13 +81,13 @@ def _get_existing_sha(path: str) -> Optional[str]:
     return response.json().get("sha")
 
 
-def save_file_bytes_to_github(path: str, content: bytes, commit_message: str) -> GitHubFileResult:
+def save_file_bytes_to_github(path: str, content: bytes, commit_message: str, known_sha: str = "") -> GitHubFileResult:
     cfg = _read_github_config()
     if not github_is_configured():
         raise GitHubStorageError(github_status_message())
 
     clean_path = path.strip().lstrip("/")
-    sha = _get_existing_sha(clean_path)
+    sha = str(known_sha or "").strip() or _get_existing_sha(clean_path)
     payload: Dict[str, Any] = {
         "message": commit_message,
         "content": base64.b64encode(content).decode("utf-8"),
@@ -100,14 +102,45 @@ def save_file_bytes_to_github(path: str, content: bytes, commit_message: str) ->
     data = response.json()
     content_data = data.get("content", {}) or {}
     commit_data = data.get("commit", {}) or {}
-    return GitHubFileResult(path=clean_path, html_url=content_data.get("html_url", ""), commit_sha=commit_data.get("sha", ""))
+    return GitHubFileResult(
+        path=clean_path,
+        html_url=content_data.get("html_url", ""),
+        commit_sha=commit_data.get("sha", ""),
+        file_sha=content_data.get("sha", ""),
+    )
 
 
 def build_archive_payload(deck: Dict[str, Any], archive_path: str) -> bytes:
     payload = json.loads(to_json_bytes(deck).decode("utf-8"))
     payload["app_version"] = APP_VERSION
     payload["archive_path"] = archive_path
+    payload["saved_at"] = datetime.now(timezone.utc).isoformat()
     return json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+
+
+def save_draft_to_github(
+    deck: Dict[str, Any],
+    existing_archive_path: str = "",
+    known_sha: str = "",
+    commit_message: str = "Autosave presentation draft",
+) -> GitHubFileResult:
+    """Save only ``draft.json`` for fast autosave operations.
+
+    PowerPoint and mentor DOCX files are intentionally not rebuilt here. They
+    remain part of the explicit **Save all to GitHub** workflow.
+    """
+    cfg = _read_github_config()
+    if not github_is_configured():
+        raise GitHubStorageError(github_status_message())
+
+    archive_path = existing_archive_path.strip().strip("/") or f"{cfg['base_path']}/{make_archive_slug(deck)}"
+    draft_path = f"{archive_path}/{ARCHIVE_JSON_NAME}"
+    return save_file_bytes_to_github(
+        draft_path,
+        build_archive_payload(deck, archive_path),
+        commit_message,
+        known_sha=known_sha,
+    )
 
 
 def save_archive_to_github(deck: Dict[str, Any], pptx_bytes: bytes, mentor_docx_bytes: bytes, existing_archive_path: str = "") -> List[GitHubFileResult]:
