@@ -10,7 +10,7 @@ Design choices:
 - docx_builder.py creates the mentor review Word document.
 - github_storage.py saves/loads the archive.
 
-There are no local JSON draft uploads/downloads. GitHub is the source of truth.
+GitHub remains the archive source of truth, with local JSON upload available for restoring or transferring drafts.
 """
 
 from __future__ import annotations
@@ -260,6 +260,59 @@ def count_words(text: Any) -> int:
     return len(re.findall(r"\b\w+\b", str(text or "")))
 
 
+def decode_uploaded_json(uploaded_file: Any) -> Dict[str, Any]:
+    """Decode a locally uploaded JSON draft with clear, safe validation."""
+    if uploaded_file is None:
+        raise ValueError("Choose a JSON file first.")
+    raw = uploaded_file.getvalue()
+    if not raw:
+        raise ValueError("The uploaded JSON file is empty.")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("The uploaded file is not valid UTF-8 JSON.") from exc
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"The uploaded file is not valid JSON (line {exc.lineno}, column {exc.colno}).") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("The JSON draft must contain a JSON object at the top level.")
+    return payload
+
+
+def unwrap_uploaded_json_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Support plain drafts, GitHub archive payloads, and common wrappers."""
+    current: Any = payload
+    # Some exported files wrap the actual deck in ``content``. Support either
+    # a parsed object or a JSON string without changing the standard schema.
+    if isinstance(current, dict) and "content" in current and "slides" not in current and "deck" not in current:
+        content = current.get("content")
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except json.JSONDecodeError:
+                content = None
+        if isinstance(content, dict):
+            current = content
+    if not isinstance(current, dict):
+        raise ValueError("The JSON file did not contain a presentation draft.")
+    return current
+
+
+def json_import_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a small human-readable summary without fully rendering the deck."""
+    unwrapped = unwrap_uploaded_json_payload(payload)
+    loaded = unwrapped.get("deck", unwrapped) if isinstance(unwrapped, dict) else {}
+    metadata = loaded.get("metadata", {}) if isinstance(loaded, dict) else {}
+    slides = loaded.get("slides", []) if isinstance(loaded, dict) else []
+    return {
+        "title": str(metadata.get("presentation_title") or "Untitled presentation"),
+        "presenter": str(metadata.get("presenter") or "Presenter not entered"),
+        "slide_count": len(slides) if isinstance(slides, list) else 0,
+        "archive_path": str(unwrapped.get("archive_path") or payload.get("archive_path") or ""),
+    }
+
+
 def clear_widget_state() -> None:
     for key in list(st.session_state.keys()):
         if key.startswith("widget__"):
@@ -275,6 +328,10 @@ def initialize_state() -> None:
         st.session_state.show_add_slides = False
     if "show_github_archive" not in st.session_state:
         st.session_state.show_github_archive = False
+    if "show_json_import" not in st.session_state:
+        st.session_state.show_json_import = False
+    if "json_import_nonce" not in st.session_state:
+        st.session_state.json_import_nonce = 0
     if "selected_slide_id" not in st.session_state:
         st.session_state.selected_slide_id = st.session_state.deck["slides"][0]["id"]
     if "selected_slide_radio" not in st.session_state:
@@ -792,6 +849,77 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                                 st.rerun()
                             except GitHubStorageError as exc:
                                 st.error(str(exc))
+
+        st.divider()
+        json_label = "Close JSON import" if st.session_state.show_json_import else "Import JSON draft"
+        if st.button(json_label, key="toggle_json_import_panel", use_container_width=True):
+            st.session_state.show_json_import = not st.session_state.show_json_import
+            st.rerun()
+
+        if st.session_state.show_json_import:
+            with st.container(border=True):
+                st.caption("Upload a presentation-builder JSON draft. Plain deck JSON and wrapped GitHub archive JSON are supported, including custom slides, speaker notes, images, and embedded PPTX replacements.")
+                uploaded_json = st.file_uploader(
+                    "Upload presentation JSON",
+                    type=["json"],
+                    key=f"widget__json_import_file__{st.session_state.json_import_nonce}",
+                    help="The uploaded file opens as a new working copy by default, so autosave will not overwrite the original GitHub archive.",
+                )
+
+                payload: Dict[str, Any] | None = None
+                summary: Dict[str, Any] | None = None
+                if uploaded_json is not None:
+                    try:
+                        payload = decode_uploaded_json(uploaded_json)
+                        summary = json_import_summary(payload)
+                        st.caption(
+                            f"{summary['title']} · {summary['presenter']} · "
+                            f"{summary['slide_count']} slide(s)"
+                        )
+                    except ValueError as exc:
+                        st.error(str(exc))
+
+                reconnect_archive = False
+                if summary and summary.get("archive_path"):
+                    reconnect_archive = st.checkbox(
+                        "Reconnect autosave to the archive path stored in this JSON",
+                        value=False,
+                        key="widget__json_import_reconnect_archive",
+                        help="Leave unchecked to open a new working copy. Check only when you intentionally want future autosaves to update the original GitHub archive.",
+                    )
+
+                if st.button(
+                    "Load JSON draft",
+                    use_container_width=True,
+                    disabled=payload is None,
+                    key="load_uploaded_json_draft",
+                ):
+                    try:
+                        unwrapped = unwrap_uploaded_json_payload(payload or {})
+                        loaded_deck = normalize_loaded_deck(unwrapped)
+                        if not loaded_deck.get("slides"):
+                            raise ValueError("The JSON file did not contain any usable slides.")
+                        ensure_deck_asset_hashes(loaded_deck)
+                        st.session_state.deck = loaded_deck
+                        st.session_state.archive_path = (
+                            str((summary or {}).get("archive_path") or "") if reconnect_archive else ""
+                        )
+                        reset_autosave_tracking(st.session_state.deck, mark_clean=True)
+                        st.session_state.prepared_pptx_bytes = None
+                        st.session_state.prepared_pptx_signature = ""
+                        st.session_state.prepared_mentor_docx_bytes = None
+                        st.session_state.prepared_mentor_signature = ""
+                        st.session_state.visual_uploader_nonce = {}
+                        st.session_state.json_import_nonce += 1
+                        st.session_state.show_json_import = False
+                        queue_slide_selection(st.session_state.deck["slides"][0]["id"])
+                        clear_widget_state()
+                        success_notice("JSON draft loaded as a new working copy." if not reconnect_archive else "JSON draft loaded and reconnected to its GitHub archive.", action=True)
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        st.error(f"Could not load this JSON draft: {exc}")
+                    except Exception as exc:
+                        st.error(f"Could not load this JSON draft: {exc}")
 
         st.divider()
         if st.button("Start blank presentation", use_container_width=True):
