@@ -12,7 +12,7 @@ from urllib.parse import quote
 import requests
 import streamlit as st
 
-from deck_model import ARCHIVE_DOCX_NAME, ARCHIVE_JSON_NAME, ARCHIVE_PPTX_NAME, APP_VERSION, make_archive_slug, to_json_bytes
+from deck_model import ARCHIVE_DOCX_NAME, ARCHIVE_JSON_NAME, ARCHIVE_PPTX_NAME, APP_VERSION, make_archive_slug, sanitize_filename, to_json_bytes
 
 
 class GitHubStorageError(RuntimeError):
@@ -110,6 +110,88 @@ def save_file_bytes_to_github(path: str, content: bytes, commit_message: str, kn
     )
 
 
+def _reference_file_record(deck: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = deck.setdefault("metadata", {}) if isinstance(deck, dict) else {}
+    record = metadata.get("reference_file", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(record, dict):
+        record = {}
+        if isinstance(metadata, dict):
+            metadata["reference_file"] = record
+    return record
+
+
+def _reference_file_bytes(record: Dict[str, Any]) -> bytes | None:
+    encoded = str(record.get("data_base64", "") or "")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception as exc:
+        raise GitHubStorageError(f"Reference file could not be decoded: {exc}") from exc
+
+
+def _reference_file_github_path(archive_path: str, filename: str) -> str:
+    safe_name = sanitize_filename(filename or "reference_file", "reference_file")
+    return f"{archive_path.strip().strip('/')}/reference_files/{safe_name}"
+
+
+def save_reference_file_to_github(deck: Dict[str, Any], archive_path: str) -> Optional[GitHubFileResult]:
+    """Save the optional presentation-level reference file as its own GitHub file.
+
+    The draft stores lightweight metadata and the GitHub path rather than
+    repeatedly embedding a large PDF/DOCX in every autosave commit.
+    """
+    record = _reference_file_record(deck)
+    content = _reference_file_bytes(record)
+    if not content:
+        return None
+
+    filename = str(record.get("filename", "reference_file") or "reference_file")
+    previous_path = str(record.get("github_path", "") or "").strip().strip("/")
+    target_path = _reference_file_github_path(archive_path, filename)
+    known_sha = str(record.get("file_sha", "") or "") if previous_path == target_path else ""
+    result = save_file_bytes_to_github(
+        target_path,
+        content,
+        f"Save presentation reference file: {filename}",
+        known_sha=known_sha,
+    )
+    record.update(
+        {
+            "filename": filename,
+            "content_type": str(record.get("content_type", "application/octet-stream") or "application/octet-stream"),
+            "size_bytes": int(record.get("size_bytes", len(content)) or len(content)),
+            "github_path": result.path,
+            "html_url": result.html_url,
+            "file_sha": result.file_sha,
+        }
+    )
+    # Once GitHub has the original file, remove the embedded bytes so ordinary
+    # draft autosaves remain small and fast.
+    record.pop("data_base64", None)
+    return result
+
+
+def load_file_bytes_from_github(path: str) -> bytes:
+    clean = str(path or "").strip().lstrip("/")
+    if not clean:
+        raise GitHubStorageError("No GitHub file path was provided.")
+    data = _github_get_contents(clean)
+    if not isinstance(data, dict) or data.get("type") not in (None, "file"):
+        raise GitHubStorageError("The selected GitHub path did not return a file.")
+    return _github_file_bytes_from_contents_response(data, clean)
+
+
+def delete_file_from_github(path: str, known_sha: str = "") -> None:
+    clean = str(path or "").strip().lstrip("/")
+    if not clean:
+        return
+    sha = str(known_sha or "").strip() or _get_existing_sha(clean)
+    if not sha:
+        return
+    _github_delete_file(clean, sha, f"Delete presentation reference file {clean}")
+
+
 def build_archive_payload(deck: Dict[str, Any], archive_path: str) -> bytes:
     payload = json.loads(to_json_bytes(deck).decode("utf-8"))
     payload["app_version"] = APP_VERSION
@@ -134,6 +216,7 @@ def save_draft_to_github(
         raise GitHubStorageError(github_status_message())
 
     archive_path = existing_archive_path.strip().strip("/") or f"{cfg['base_path']}/{make_archive_slug(deck)}"
+    save_reference_file_to_github(deck, archive_path)
     draft_path = f"{archive_path}/{ARCHIVE_JSON_NAME}"
     return save_file_bytes_to_github(
         draft_path,
@@ -149,11 +232,14 @@ def save_archive_to_github(deck: Dict[str, Any], pptx_bytes: bytes, mentor_docx_
         raise GitHubStorageError(github_status_message())
 
     archive_path = existing_archive_path.strip().strip("/") or f"{cfg['base_path']}/{make_archive_slug(deck)}"
-    results = [
+    reference_result = save_reference_file_to_github(deck, archive_path)
+    results: List[GitHubFileResult] = [
         save_file_bytes_to_github(f"{archive_path}/{ARCHIVE_JSON_NAME}", build_archive_payload(deck, archive_path), "Save presentation builder draft"),
         save_file_bytes_to_github(f"{archive_path}/{ARCHIVE_PPTX_NAME}", pptx_bytes, "Save generated presentation PPTX"),
         save_file_bytes_to_github(f"{archive_path}/{ARCHIVE_DOCX_NAME}", mentor_docx_bytes, "Save mentor review DOCX"),
     ]
+    if reference_result is not None:
+        results.append(reference_result)
     return results
 
 

@@ -51,6 +51,8 @@ from github_storage import (
     save_archive_to_github,
     save_draft_to_github,
     delete_archive_from_github,
+    load_file_bytes_from_github,
+    delete_file_from_github,
 )
 
 
@@ -110,8 +112,9 @@ def _signature_view(value: Any, parent_key: str = "") -> Any:
         result: Dict[str, Any] = {}
         existing_digest = str(value.get("sha256", "") or "").strip()
         for key, item in list(value.items()):
-            # Cached UI previews do not change the exported PPTX or mentor content.
-            if key == "uploaded_slide_preview_image":
+            # Cached UI previews and presentation reference files do not change
+            # the exported PPTX or mentor DOCX.
+            if key in {"uploaded_slide_preview_image", "reference_file"}:
                 continue
             if key == "data_base64":
                 encoded = item if isinstance(item, str) else str(item or "")
@@ -338,6 +341,10 @@ def initialize_state() -> None:
         st.session_state.selected_slide_radio = st.session_state.selected_slide_id
     if "visual_uploader_nonce" not in st.session_state:
         st.session_state.visual_uploader_nonce = {}
+    if "reference_uploader_nonce" not in st.session_state:
+        st.session_state.reference_uploader_nonce = 0
+    if "reference_file_cache" not in st.session_state:
+        st.session_state.reference_file_cache = {}
     if "archive_path" not in st.session_state:
         st.session_state.archive_path = ""
     if "archive_results" not in st.session_state:
@@ -498,6 +505,153 @@ def stored_asset_sha256(asset: Dict[str, Any]) -> str:
         return digest
     except Exception:
         return ""
+
+
+def get_reference_file(deck: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = deck.setdefault("metadata", {})
+    reference = metadata.get("reference_file", {})
+    if not isinstance(reference, dict):
+        reference = {}
+        metadata["reference_file"] = reference
+    return reference
+
+
+def reference_file_bytes(deck: Dict[str, Any]) -> bytes | None:
+    reference = get_reference_file(deck)
+    encoded = reference.get("data_base64")
+    if isinstance(encoded, str) and encoded:
+        try:
+            return base64.b64decode(encoded)
+        except Exception:
+            return None
+
+    cache = st.session_state.get("reference_file_cache", {})
+    if not isinstance(cache, dict):
+        return None
+    expected_hash = str(reference.get("sha256", "") or "")
+    if expected_hash and cache.get("sha256") == expected_hash and isinstance(cache.get("bytes"), bytes):
+        return cache["bytes"]
+    return None
+
+
+def human_file_size(size_bytes: Any) -> str:
+    try:
+        size = float(size_bytes or 0)
+    except Exception:
+        return ""
+    units = ["B", "KB", "MB", "GB"]
+    unit = units[0]
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            break
+        size /= 1024
+    return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+
+
+def render_reference_file_upload(deck: Dict[str, Any]) -> None:
+    """Upload one presentation-level source/reference file.
+
+    The file is stored with the GitHub archive but is never inserted into the
+    PowerPoint or mentor review document.
+    """
+    st.markdown("#### Optional reference file")
+    st.caption("Upload a PDF, Word document, spreadsheet, image, text file, or other source you may need while building the talk. It is saved with the GitHub archive but is not added to the PowerPoint or mentor DOCX.")
+
+    nonce = int(st.session_state.get("reference_uploader_nonce", 0))
+    uploaded = st.file_uploader(
+        "Upload reference file",
+        type=None,
+        key=f"widget__reference_file__{nonce}",
+        help="One reference file can be stored with this presentation. Uploading another file replaces the current one.",
+    )
+
+    if uploaded is not None:
+        data = uploaded.getvalue()
+        upload_hash = asset_sha256(data)
+        reference = get_reference_file(deck)
+        already_processed = str(reference.get("sha256", "") or "") == upload_hash
+        if not already_processed:
+            max_bytes = 25 * 1024 * 1024
+            if len(data) > max_bytes:
+                st.error("The reference file is larger than 25 MB. Please compress it before uploading.")
+            else:
+                old_path = str(reference.get("github_path", "") or "")
+                old_sha = str(reference.get("file_sha", "") or "")
+                current_archive = str(st.session_state.get("archive_path", "") or "").strip().strip("/")
+                if old_path and current_archive and old_path.startswith(current_archive + "/"):
+                    try:
+                        delete_file_from_github(old_path, old_sha)
+                    except Exception:
+                        # Replacement should still succeed even if an old source
+                        # file could not be cleaned up immediately.
+                        pass
+
+                deck["metadata"]["reference_file"] = {
+                    "filename": uploaded.name,
+                    "content_type": uploaded.type or "application/octet-stream",
+                    "size_bytes": len(data),
+                    "sha256": upload_hash,
+                    "data_base64": base64.b64encode(data).decode("ascii"),
+                }
+                st.session_state.reference_file_cache = {"sha256": upload_hash, "bytes": data}
+                saved_to_github = autosave_current_draft(reason="reference file uploaded", force=True)
+                if saved_to_github:
+                    success_notice("Reference file saved with the presentation archive.", action=True)
+                elif not github_is_configured():
+                    st.toast("Reference file stored in this working draft. Configure GitHub or use Save all to archive it.", icon="📎")
+                st.rerun()
+
+    reference = get_reference_file(deck)
+    if not reference.get("filename"):
+        return
+
+    filename = str(reference.get("filename", "reference_file"))
+    size_label = human_file_size(reference.get("size_bytes"))
+    st.caption(f"Current reference: **{filename}**" + (f" · {size_label}" if size_label else ""))
+
+    data = reference_file_bytes(deck)
+    if data is None and reference.get("github_path"):
+        if st.button("Load reference file for download", use_container_width=True, key="load_reference_file_for_download"):
+            try:
+                with st.spinner("Loading the reference file from GitHub…"):
+                    data = load_file_bytes_from_github(str(reference.get("github_path", "")))
+                st.session_state.reference_file_cache = {
+                    "sha256": str(reference.get("sha256", "") or asset_sha256(data)),
+                    "bytes": data,
+                }
+                st.rerun()
+            except GitHubStorageError as exc:
+                st.error(str(exc))
+
+    data = reference_file_bytes(deck)
+    if data is not None:
+        st.download_button(
+            "Download reference file",
+            data=data,
+            file_name=filename,
+            mime=str(reference.get("content_type", "application/octet-stream") or "application/octet-stream"),
+            use_container_width=True,
+            key="download_reference_file",
+        )
+
+    html_url = str(reference.get("html_url", "") or "")
+    if html_url:
+        st.markdown(f"[Open reference file in GitHub]({html_url})")
+
+    if st.button("Remove reference file", use_container_width=True, key="remove_reference_file"):
+        github_path = str(reference.get("github_path", "") or "")
+        file_sha = str(reference.get("file_sha", "") or "")
+        current_archive = str(st.session_state.get("archive_path", "") or "").strip().strip("/")
+        if github_path and current_archive and github_path.startswith(current_archive + "/"):
+            try:
+                delete_file_from_github(github_path, file_sha)
+            except Exception:
+                pass
+        deck["metadata"]["reference_file"] = {}
+        st.session_state.reference_file_cache = {}
+        st.session_state.reference_uploader_nonce = nonce + 1
+        autosave_current_draft(reason="reference file removed", force=True)
+        st.rerun()
 
 
 def has_uploaded_visual(slide: Dict[str, Any]) -> bool:
@@ -816,6 +970,8 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                             st.session_state.deck = normalize_loaded_deck(payload)
                             st.session_state.archive_path = payload.get("archive_path", selected_path)
                             reset_autosave_tracking(st.session_state.deck, mark_clean=True)
+                            st.session_state.reference_file_cache = {}
+                            st.session_state.reference_uploader_nonce += 1
                             queue_slide_selection(st.session_state.deck["slides"][0]["id"])
                             clear_widget_state()
                             success_notice("Loaded from GitHub.", action=True)
@@ -910,6 +1066,8 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
                         st.session_state.prepared_mentor_docx_bytes = None
                         st.session_state.prepared_mentor_signature = ""
                         st.session_state.visual_uploader_nonce = {}
+                        st.session_state.reference_file_cache = {}
+                        st.session_state.reference_uploader_nonce += 1
                         st.session_state.json_import_nonce += 1
                         st.session_state.show_json_import = False
                         queue_slide_selection(st.session_state.deck["slides"][0]["id"])
@@ -926,6 +1084,8 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
             st.session_state.deck = default_deck()
             st.session_state.archive_path = ""
             reset_autosave_tracking(st.session_state.deck, mark_clean=True)
+            st.session_state.reference_file_cache = {}
+            st.session_state.reference_uploader_nonce += 1
             queue_slide_selection(st.session_state.deck["slides"][0]["id"])
             clear_widget_state()
             st.rerun()
@@ -987,6 +1147,8 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
         placeholder="Beginning: why this matters → Middle: what we learn → End: how thinking/practice changes",
     )
     meta["archive_notes"] = st.text_area("Internal archive notes", meta.get("archive_notes", ""), height=70)
+
+    render_reference_file_upload(deck)
 
     st.markdown("#### Optional title-slide visual")
     render_visual_upload(slide)

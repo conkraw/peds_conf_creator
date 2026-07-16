@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.16-v5.25"
+APP_VERSION = "2026.07.16-v5.26"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -271,6 +271,7 @@ def default_deck(talk_type: str = "Educational Topic") -> Dict[str, Any]:
             "core_question": "",
             "story_arc": "",
             "archive_notes": "",
+            "reference_file": {},
         },
         "slides": starter_slides_for_talk_type(talk_type),
     }
@@ -348,6 +349,8 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
         return base
 
     base["metadata"].update(loaded.get("metadata", {}))
+    reference_file = base["metadata"].get("reference_file", {})
+    base["metadata"]["reference_file"] = reference_file if isinstance(reference_file, dict) else {}
 
     loaded_slides = loaded.get("slides")
     if isinstance(loaded_slides, list) and loaded_slides:
