@@ -21,3 +21,14 @@ Update v5.28: clarified the difference between reference files and slide visuals
 - A newly uploaded title image clears stale title-slide images and PPTX replacements.
 - The app shows the exact active filename and preview before export.
 - The title-image uploader resets immediately after a successful replacement.
+
+
+Update v5.29: hardened Slide 1 image replacement. Title image uploads now update both the dedicated title-image metadata and the legacy Slide 1 visual field, clear export caches, invalidate prepared files, and use download buttons keyed to the current deck signature to avoid stale PPTX downloads.
+
+
+## v5.30
+
+- Moved the presentation reference-file uploader into a dedicated app-only navigation section after the final slide.
+- With a 19-slide deck, it appears as **20. Reference file — app only**.
+- The reference section is not added to `deck["slides"]` and therefore cannot appear in the PowerPoint or mentor DOCX.
+- Removed the reference uploader from the Title-slide editor so it is easier to find and cannot be confused with the Slide 1 visual uploader.

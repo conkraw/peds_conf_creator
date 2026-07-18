@@ -402,17 +402,23 @@ def get_selected_slide(deck: Dict[str, Any]) -> Dict[str, Any]:
 def sync_selected_slide_from_radio() -> None:
     """Keep sidebar navigation single-click responsive.
 
-    The radio widget stores a stable slide ID, while format_func renders the
-    current human-readable label. This prevents the old double-click behavior
-    that can happen when radio options are dynamic labels and the user edits a
-    slide title.
+    The radio widget stores a stable slide ID for actual slides plus one
+    app-only reference-files destination. The reference destination is never
+    added to ``deck["slides"]``, so it cannot appear in the PowerPoint export.
     """
     selected = st.session_state.get("selected_slide_radio")
     slide_ids = [slide.get("id") for slide in st.session_state.deck.get("slides", [])]
     current = st.session_state.get("selected_slide_id")
+
+    # Autosave the slide being edited before navigating either to another
+    # slide or to the app-only reference section.
+    if AUTOSAVE_ON_SLIDE_CHANGE and selected != current:
+        autosave_current_draft(reason="slide change")
+
+    # Keep selected_slide_id tied only to real PowerPoint slides. The radio may
+    # point to the reference section while selected_slide_id retains the most
+    # recently edited real slide for slide operations such as Add after.
     if selected in slide_ids:
-        if AUTOSAVE_ON_SLIDE_CHANGE and selected != current:
-            autosave_current_draft(reason="slide change")
         st.session_state.selected_slide_id = selected
 
 
@@ -612,14 +618,15 @@ def human_file_size(size_bytes: Any) -> str:
     return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
 
 
-def render_reference_file_upload(deck: Dict[str, Any]) -> None:
+def render_reference_file_upload(deck: Dict[str, Any], show_heading: bool = True) -> None:
     """Upload one presentation-level source/reference file.
 
     The file is stored with the GitHub archive but is never inserted into the
     PowerPoint or mentor review document.
     """
-    st.markdown("#### Reference file — not inserted into PowerPoint")
-    st.caption("Use this for a PDF, Word document, article, spreadsheet, image, or other source you may need while building the talk. It is saved with the GitHub archive only; it will not appear in the PowerPoint or mentor DOCX unless you separately upload it as a slide visual.")
+    if show_heading:
+        st.markdown("#### Reference file — not inserted into PowerPoint")
+        st.caption("Use this for a PDF, Word document, article, spreadsheet, image, or other source you may need while building the talk. It is saved with the GitHub archive only; it will not appear in the PowerPoint or mentor DOCX unless you separately upload it as a slide visual.")
 
     nonce = int(st.session_state.get("reference_uploader_nonce", 0))
     uploaded = st.file_uploader(
@@ -956,12 +963,17 @@ def sync_takehome_body(slide: Dict[str, Any]) -> None:
 # -----------------------------------------------------------------------------
 
 
+REFERENCE_SECTION_ID = "__presentation_reference_files__"
+
+
 def render_sidebar(deck: Dict[str, Any]) -> None:
     with st.sidebar:
         st.header("Slides")
         st.caption(f"Running app version: {APP_VERSION}")
         slide_ids = [slide["id"] for slide in deck["slides"]]
+        nav_ids = slide_ids + [REFERENCE_SECTION_ID]
         id_to_label = {slide["id"]: slide_nav_label(i + 1, slide) for i, slide in enumerate(deck["slides"])}
+        id_to_label[REFERENCE_SECTION_ID] = f"{len(slide_ids) + 1}. Reference file — app only"
 
         pending_slide_id = st.session_state.pop("pending_selected_slide_id", None)
         if pending_slide_id in slide_ids:
@@ -970,22 +982,24 @@ def render_sidebar(deck: Dict[str, Any]) -> None:
 
         if st.session_state.selected_slide_id not in slide_ids:
             st.session_state.selected_slide_id = slide_ids[0]
-        if st.session_state.get("selected_slide_radio") not in slide_ids:
+        if st.session_state.get("selected_slide_radio") not in nav_ids:
             st.session_state.selected_slide_radio = st.session_state.selected_slide_id
 
-        current_index = slide_ids.index(st.session_state.selected_slide_id)
+        current_nav_id = st.session_state.get("selected_slide_radio", st.session_state.selected_slide_id)
+        current_index = nav_ids.index(current_nav_id) if current_nav_id in nav_ids else 0
         st.radio(
-            "Choose slide",
-            slide_ids,
+            "Choose slide or app section",
+            nav_ids,
             index=current_index,
             format_func=lambda sid: id_to_label.get(sid, "Slide"),
             key="selected_slide_radio",
             on_change=sync_selected_slide_from_radio,
             label_visibility="collapsed",
         )
-        st.session_state.selected_slide_id = st.session_state.selected_slide_radio
+        if st.session_state.selected_slide_radio in slide_ids:
+            st.session_state.selected_slide_id = st.session_state.selected_slide_radio
 
-        st.caption("All slides export to PowerPoint automatically.")
+        st.caption(f"Slides 1–{len(slide_ids)} export to PowerPoint. The reference-file section is app-only.")
         st.divider()
 
         add_slides_label = "Close add slides" if st.session_state.show_add_slides else "Add slides"
@@ -1343,8 +1357,6 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     )
     meta["archive_notes"] = st.text_area("Internal archive notes", meta.get("archive_notes", ""), height=70)
 
-    render_reference_file_upload(deck)
-
     st.markdown("#### Title-slide visual — appears on the exported title slide")
     st.caption("Upload the picture you want on Slide 1. The active filename and exact preview are shown below so you can verify the image before exporting.")
     render_title_visual_upload(deck, slide)
@@ -1645,7 +1657,25 @@ def render_standard_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     widget_text(slide, "speaker_notes", "Speaker notes exported into PowerPoint", height=260, multiline=True)
 
 
+def render_reference_section(deck: Dict[str, Any]) -> None:
+    """Render an app-only home for the presentation reference file."""
+    position = len(deck.get("slides", [])) + 1
+    st.markdown(f"### {position}. Reference file")
+    st.caption(
+        "App-only workspace. Files saved here stay with the presentation archive but are not inserted into "
+        "the PowerPoint or mentor DOCX and are not counted as slides."
+    )
+    st.caption(
+        "Use this for a source article, guideline, PDF, Word document, spreadsheet, image, or other supporting file."
+    )
+    render_reference_file_upload(deck, show_heading=False)
+
+
 def render_slide_editor(deck: Dict[str, Any]) -> None:
+    if st.session_state.get("selected_slide_radio") == REFERENCE_SECTION_ID:
+        render_reference_section(deck)
+        return
+
     slide = get_selected_slide(deck)
     role = slide.get("role")
     kind = slide.get("slide_kind")
