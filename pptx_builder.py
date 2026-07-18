@@ -325,10 +325,11 @@ def visual_image_bytes(slide_data: Dict[str, Any]) -> bytes | None:
 
 
 def title_visual_image_bytes(deck: Dict[str, Any], slide_data: Dict[str, Any]) -> bytes | None:
-    """Return the dedicated Slide 1 image, with legacy fallback.
+    """Return the exact image intended for Slide 1.
 
-    v5.28 stores the title visual in presentation metadata so an older
-    slide-level image cannot silently override a newly uploaded picture.
+    v5.29 stores title uploads in both metadata and the Slide 1 visual field
+    to defeat stale legacy data. The metadata copy remains the primary source;
+    the slide-level copy is only a compatibility fallback.
     """
     metadata = deck.get("metadata", {}) if isinstance(deck, dict) else {}
     image = metadata.get("title_visual_image", {}) if isinstance(metadata, dict) else {}

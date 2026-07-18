@@ -378,6 +378,18 @@ def invalidate_prepared_exports() -> None:
     st.session_state.prepared_mentor_signature = ""
 
 
+def clear_export_caches() -> None:
+    """Clear cached export builders after replacing embedded assets."""
+    try:
+        cached_build_pptx.clear()
+        cached_build_mentor_docx.clear()
+    except Exception:
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+
+
 def get_selected_slide(deck: Dict[str, Any]) -> Dict[str, Any]:
     slide_id = st.session_state.selected_slide_id
     for slide in deck.get("slides", []):
@@ -692,21 +704,25 @@ def render_reference_file_upload(deck: Dict[str, Any]) -> None:
             st.caption("This reference image is not on the title slide yet.")
             if st.button("Use this image as the title-slide visual", use_container_width=True, key="use_reference_as_title_visual"):
                 title_slide = deck["slides"][0]
-                deck["metadata"]["title_visual_image"] = {
+                title_asset = {
                     "filename": filename,
                     "content_type": content_type or "image/png",
                     "sha256": str(reference.get("sha256", "") or asset_sha256(data)),
+                    "size_bytes": len(data),
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
+                deck["metadata"]["title_visual_image"] = dict(title_asset)
                 deck["metadata"]["title_visual_full_slide"] = False
-                title_slide["visual_image"] = {}
+                deck["metadata"]["title_visual_source"] = "reference_file_copy"
+                title_slide["visual_image"] = dict(title_asset)
                 title_slide["uploaded_slide_pptx"] = {}
                 title_slide["uploaded_slide_preview_image"] = {}
                 title_slide["visual_full_slide"] = False
                 st.session_state.title_visual_uploader_nonce = int(st.session_state.get("title_visual_uploader_nonce", 0)) + 1
                 invalidate_prepared_exports()
+                clear_export_caches()
                 autosave_current_draft(reason="reference image copied to title visual", force=True)
-                st.toast("Reference image copied to the title-slide visual.", icon="🖼️")
+                st.toast("Reference image copied to the title-slide visual. Prepare PPTX again before downloading.", icon="🖼️")
                 st.rerun()
 
     html_url = str(reference.get("html_url", "") or "")
@@ -1218,24 +1234,28 @@ def render_title_visual_upload(deck: Dict[str, Any], slide: Dict[str, Any]) -> N
                 except Exception:
                     st.error("The selected file could not be read as a PNG or JPEG image.")
                 else:
-                    deck["metadata"]["title_visual_image"] = {
+                    title_asset = {
                         "filename": uploaded.name,
                         "content_type": uploaded.type or "image/png",
                         "sha256": upload_hash,
                         "size_bytes": len(data),
                         "data_base64": base64.b64encode(data).decode("ascii"),
                     }
+                    deck["metadata"]["title_visual_image"] = dict(title_asset)
                     deck["metadata"]["title_visual_full_slide"] = False
-                    # Clear every competing title-slide asset. A previous image
-                    # or editable PPTX replacement can no longer win at export.
-                    slide["visual_image"] = {}
+                    deck["metadata"]["title_visual_source"] = "dedicated_title_upload"
+                    # Store the exact same asset on Slide 1 as well. This makes
+                    # older archive drafts and any legacy title-rendering path use
+                    # the newly selected image, not a stale prior visual.
+                    slide["visual_image"] = dict(title_asset)
                     slide["uploaded_slide_pptx"] = {}
                     slide["uploaded_slide_preview_image"] = {}
                     slide["visual_full_slide"] = False
                     st.session_state.title_visual_uploader_nonce = nonce + 1
                     invalidate_prepared_exports()
+                    clear_export_caches()
                     autosave_current_draft(reason="title image replaced", force=True)
-                    st.toast(f"Slide 1 image set to {uploaded.name}.", icon="🖼️")
+                    st.toast(f"Slide 1 image set to {uploaded.name}. Prepare PPTX again before downloading.", icon="🖼️")
                     st.rerun()
 
     image_info = get_title_visual_image(deck)
@@ -1245,7 +1265,9 @@ def render_title_visual_upload(deck: Dict[str, Any], slide: Dict[str, Any]) -> N
         return
 
     filename = str(image_info.get("filename", "title_visual.png") or "title_visual.png")
+    active_sha = str(image_info.get("sha256", "") or asset_sha256(image_data))
     st.markdown(f"**Active Slide 1 image:** `{filename}`")
+    st.caption(f"Export image ID: `{active_sha[:12]}` — if this changes, use Prepare PPTX again before downloading.")
     st.image(image_data, caption="This exact image will be used in the next PowerPoint export.", width=520)
 
     full_slide = st.checkbox(
@@ -1276,6 +1298,7 @@ def render_title_visual_upload(deck: Dict[str, Any], slide: Dict[str, Any]) -> N
         slide["visual_full_slide"] = False
         st.session_state.title_visual_uploader_nonce = nonce + 1
         invalidate_prepared_exports()
+        clear_export_caches()
         autosave_current_draft(reason="title image removed", force=True)
         st.rerun()
 
@@ -1713,6 +1736,7 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
                 disabled=not complete_mentor_doc,
+                key=f"download_mentor_{current_signature}",
             )
 
     with st.container(border=True):
@@ -1743,6 +1767,7 @@ def render_export_panel(deck: Dict[str, Any]) -> None:
                 file_name=ARCHIVE_PPTX_NAME,
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 use_container_width=True,
+                key=f"download_pptx_{current_signature}",
             )
 
     with st.container(border=True):
