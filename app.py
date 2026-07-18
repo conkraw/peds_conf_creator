@@ -326,6 +326,7 @@ def initialize_state() -> None:
     if "deck" not in st.session_state:
         st.session_state.deck = default_deck()
     ensure_core_slide_order(st.session_state.deck)
+    migrate_title_visual_to_metadata(st.session_state.deck)
     st.session_state.deck["app_version"] = APP_VERSION
     if "show_add_slides" not in st.session_state:
         st.session_state.show_add_slides = False
@@ -343,6 +344,8 @@ def initialize_state() -> None:
         st.session_state.visual_uploader_nonce = {}
     if "reference_uploader_nonce" not in st.session_state:
         st.session_state.reference_uploader_nonce = 0
+    if "title_visual_uploader_nonce" not in st.session_state:
+        st.session_state.title_visual_uploader_nonce = 0
     if "reference_file_cache" not in st.session_state:
         st.session_state.reference_file_cache = {}
     if "archive_path" not in st.session_state:
@@ -428,6 +431,47 @@ def visual_image_bytes(slide: Dict[str, Any]) -> bytes | None:
         return base64.b64decode(encoded)
     except Exception:
         return None
+
+
+def get_title_visual_image(deck: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the dedicated presentation-level Slide 1 visual record."""
+    metadata = deck.setdefault("metadata", {})
+    image = metadata.get("title_visual_image", {})
+    if not isinstance(image, dict):
+        image = {}
+        metadata["title_visual_image"] = image
+    return image
+
+
+def title_visual_image_bytes(deck: Dict[str, Any]) -> bytes | None:
+    encoded = get_title_visual_image(deck).get("data_base64")
+    if not isinstance(encoded, str) or not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded)
+    except Exception:
+        return None
+
+
+def migrate_title_visual_to_metadata(deck: Dict[str, Any]) -> None:
+    """Move legacy Slide 1 image data into the dedicated metadata field."""
+    ensure_core_slide_order(deck)
+    slides = deck.get("slides", [])
+    if not slides or not isinstance(slides[0], dict):
+        return
+    title_slide = slides[0]
+    metadata = deck.setdefault("metadata", {})
+    current = get_title_visual_image(deck)
+    if not current.get("data_base64"):
+        legacy = get_visual_image(title_slide)
+        if legacy.get("data_base64"):
+            metadata["title_visual_image"] = dict(legacy)
+            metadata["title_visual_full_slide"] = bool(title_slide.get("visual_full_slide", False))
+    # Remove the competing legacy copy after migration. The dedicated metadata
+    # field is now the only source used for the generated title slide.
+    if get_title_visual_image(deck).get("data_base64"):
+        title_slide["visual_image"] = {}
+        title_slide["visual_full_slide"] = False
 
 
 def get_uploaded_slide_pptx(slide: Dict[str, Any]) -> Dict[str, str]:
@@ -648,15 +692,18 @@ def render_reference_file_upload(deck: Dict[str, Any]) -> None:
             st.caption("This reference image is not on the title slide yet.")
             if st.button("Use this image as the title-slide visual", use_container_width=True, key="use_reference_as_title_visual"):
                 title_slide = deck["slides"][0]
-                title_slide["visual_image"] = {
+                deck["metadata"]["title_visual_image"] = {
                     "filename": filename,
                     "content_type": content_type or "image/png",
                     "sha256": str(reference.get("sha256", "") or asset_sha256(data)),
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
+                deck["metadata"]["title_visual_full_slide"] = False
+                title_slide["visual_image"] = {}
                 title_slide["uploaded_slide_pptx"] = {}
                 title_slide["uploaded_slide_preview_image"] = {}
                 title_slide["visual_full_slide"] = False
+                st.session_state.title_visual_uploader_nonce = int(st.session_state.get("title_visual_uploader_nonce", 0)) + 1
                 invalidate_prepared_exports()
                 autosave_current_draft(reason="reference image copied to title visual", force=True)
                 st.toast("Reference image copied to the title-slide visual.", icon="🖼️")
@@ -1137,6 +1184,102 @@ def widget_text(slide: Dict[str, Any], field: str, label: str, *, height: int = 
     return value
 
 
+def render_title_visual_upload(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
+    """Upload the exact image used on Slide 1.
+
+    This intentionally does not reuse the generic per-slide uploader. Older
+    JSON drafts could retain a stale Slide 1 visual while a new image appeared
+    selected in the widget. The dedicated metadata record removes that
+    ambiguity and resets the uploader immediately after a successful replace.
+    """
+    migrate_title_visual_to_metadata(deck)
+    nonce = int(st.session_state.get("title_visual_uploader_nonce", 0))
+    uploaded = st.file_uploader(
+        "Upload the image that should appear on Slide 1",
+        type=["png", "jpg", "jpeg"],
+        key=f"widget__title_visual_file__{nonce}",
+        help="This image is embedded directly into the exported title slide.",
+    )
+
+    if uploaded is not None:
+        data = uploaded.getvalue()
+        upload_hash = asset_sha256(data)
+        active_hash = str(get_title_visual_image(deck).get("sha256", "") or "")
+        if upload_hash != active_hash:
+            if len(data) > 8 * 1024 * 1024:
+                st.error("This title image is larger than 8 MB. Please compress it before uploading.")
+            else:
+                # Validate that Pillow can open the file before storing it.
+                try:
+                    from io import BytesIO
+                    from PIL import Image
+                    with Image.open(BytesIO(data)) as image:
+                        image.verify()
+                except Exception:
+                    st.error("The selected file could not be read as a PNG or JPEG image.")
+                else:
+                    deck["metadata"]["title_visual_image"] = {
+                        "filename": uploaded.name,
+                        "content_type": uploaded.type or "image/png",
+                        "sha256": upload_hash,
+                        "size_bytes": len(data),
+                        "data_base64": base64.b64encode(data).decode("ascii"),
+                    }
+                    deck["metadata"]["title_visual_full_slide"] = False
+                    # Clear every competing title-slide asset. A previous image
+                    # or editable PPTX replacement can no longer win at export.
+                    slide["visual_image"] = {}
+                    slide["uploaded_slide_pptx"] = {}
+                    slide["uploaded_slide_preview_image"] = {}
+                    slide["visual_full_slide"] = False
+                    st.session_state.title_visual_uploader_nonce = nonce + 1
+                    invalidate_prepared_exports()
+                    autosave_current_draft(reason="title image replaced", force=True)
+                    st.toast(f"Slide 1 image set to {uploaded.name}.", icon="🖼️")
+                    st.rerun()
+
+    image_info = get_title_visual_image(deck)
+    image_data = title_visual_image_bytes(deck)
+    if not image_data:
+        st.caption("No image is currently assigned to Slide 1.")
+        return
+
+    filename = str(image_info.get("filename", "title_visual.png") or "title_visual.png")
+    st.markdown(f"**Active Slide 1 image:** `{filename}`")
+    st.image(image_data, caption="This exact image will be used in the next PowerPoint export.", width=520)
+
+    full_slide = st.checkbox(
+        "Use this image as a whole-slide title visual",
+        value=bool(deck.get("metadata", {}).get("title_visual_full_slide", False)),
+        key="widget__title_visual_full_slide",
+        help="When unchecked, the image appears beside the title information. When checked, it fills most of the title slide behind a compact title panel.",
+    )
+    if full_slide != bool(deck.get("metadata", {}).get("title_visual_full_slide", False)):
+        deck["metadata"]["title_visual_full_slide"] = full_slide
+        invalidate_prepared_exports()
+        autosave_current_draft(reason="title image layout changed", force=True)
+
+    st.download_button(
+        "Download active title image",
+        data=image_data,
+        file_name=filename,
+        mime=str(image_info.get("content_type", "image/png") or "image/png"),
+        use_container_width=True,
+        key="download_active_title_image",
+    )
+    if st.button("Remove title image", use_container_width=True, key="remove_title_visual"):
+        deck["metadata"]["title_visual_image"] = {}
+        deck["metadata"]["title_visual_full_slide"] = False
+        slide["visual_image"] = {}
+        slide["uploaded_slide_pptx"] = {}
+        slide["uploaded_slide_preview_image"] = {}
+        slide["visual_full_slide"] = False
+        st.session_state.title_visual_uploader_nonce = nonce + 1
+        invalidate_prepared_exports()
+        autosave_current_draft(reason="title image removed", force=True)
+        st.rerun()
+
+
 def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     meta = deck["metadata"]
     st.markdown("### Title slide")
@@ -1180,8 +1323,8 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
     render_reference_file_upload(deck)
 
     st.markdown("#### Title-slide visual — appears on the exported title slide")
-    st.caption("Upload the picture you want to appear on Slide 1 here. This is separate from the reference file above.")
-    render_visual_upload(slide)
+    st.caption("Upload the picture you want on Slide 1. The active filename and exact preview are shown below so you can verify the image before exporting.")
+    render_title_visual_upload(deck, slide)
 
     slide["title"] = meta.get("presentation_title", "")
     slide["speaker_notes"] = widget_text(slide, "speaker_notes", "Speaker notes for title slide", height=220, multiline=True)

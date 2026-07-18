@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, List
 
 APP_TITLE = "Pediatric Residency Presentation Builder"
-APP_VERSION = "2026.07.18-v5.27"
+APP_VERSION = "2026.07.18-v5.28"
 ARCHIVE_JSON_NAME = "draft.json"
 ARCHIVE_PPTX_NAME = "presentation.pptx"
 ARCHIVE_DOCX_NAME = "mentor_review.docx"
@@ -272,6 +272,8 @@ def default_deck(talk_type: str = "Educational Topic") -> Dict[str, Any]:
             "story_arc": "",
             "archive_notes": "",
             "reference_file": {},
+            "title_visual_image": {},
+            "title_visual_full_slide": False,
         },
         "slides": starter_slides_for_talk_type(talk_type),
     }
@@ -351,6 +353,9 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
     base["metadata"].update(loaded.get("metadata", {}))
     reference_file = base["metadata"].get("reference_file", {})
     base["metadata"]["reference_file"] = reference_file if isinstance(reference_file, dict) else {}
+    title_visual = base["metadata"].get("title_visual_image", {})
+    base["metadata"]["title_visual_image"] = title_visual if isinstance(title_visual, dict) else {}
+    base["metadata"]["title_visual_full_slide"] = bool(base["metadata"].get("title_visual_full_slide", False))
 
     loaded_slides = loaded.get("slides")
     if isinstance(loaded_slides, list) and loaded_slides:
@@ -385,4 +390,39 @@ def normalize_loaded_deck(payload: Dict[str, Any]) -> Dict[str, Any]:
             normalized_slides.append(slide)
         if normalized_slides:
             base["slides"] = normalized_slides
-    return ensure_core_slide_order(base)
+
+    base = ensure_core_slide_order(base)
+
+    # v5.28 makes the presentation-level title visual the single source of
+    # truth. Older drafts stored the image only inside Slide 1. Migrate that
+    # image automatically so a newly uploaded title image cannot be confused
+    # with a stale slide-level visual from an older JSON file.
+    title_slide = next(
+        (
+            slide
+            for slide in base.get("slides", [])
+            if isinstance(slide, dict)
+            and (slide.get("role") == "Title" or slide.get("slide_kind") == "title")
+        ),
+        None,
+    )
+    metadata = base.setdefault("metadata", {})
+    title_visual = metadata.get("title_visual_image", {})
+    if not isinstance(title_visual, dict):
+        title_visual = {}
+    if title_slide is not None and not title_visual.get("data_base64"):
+        legacy_visual = title_slide.get("visual_image", {})
+        if isinstance(legacy_visual, dict) and legacy_visual.get("data_base64"):
+            title_visual = copy.deepcopy(legacy_visual)
+            metadata["title_visual_full_slide"] = bool(title_slide.get("visual_full_slide", False))
+    metadata["title_visual_image"] = title_visual
+    metadata["title_visual_full_slide"] = bool(metadata.get("title_visual_full_slide", False))
+
+    # Once migrated, clear the legacy title-slide image field. Keeping two
+    # competing copies was the source of the stale-image behavior. Editable
+    # PPTX replacement slides remain supported and are intentionally untouched.
+    if title_slide is not None and title_visual.get("data_base64"):
+        title_slide["visual_image"] = {}
+        title_slide["visual_full_slide"] = False
+
+    return base

@@ -324,6 +324,31 @@ def visual_image_bytes(slide_data: Dict[str, Any]) -> bytes | None:
         return None
 
 
+def title_visual_image_bytes(deck: Dict[str, Any], slide_data: Dict[str, Any]) -> bytes | None:
+    """Return the dedicated Slide 1 image, with legacy fallback.
+
+    v5.28 stores the title visual in presentation metadata so an older
+    slide-level image cannot silently override a newly uploaded picture.
+    """
+    metadata = deck.get("metadata", {}) if isinstance(deck, dict) else {}
+    image = metadata.get("title_visual_image", {}) if isinstance(metadata, dict) else {}
+    if isinstance(image, dict):
+        encoded = image.get("data_base64")
+        if encoded:
+            try:
+                return base64.b64decode(encoded)
+            except Exception:
+                pass
+    return visual_image_bytes(slide_data)
+
+
+def title_visual_uses_full_slide(deck: Dict[str, Any], slide_data: Dict[str, Any]) -> bool:
+    metadata = deck.get("metadata", {}) if isinstance(deck, dict) else {}
+    if isinstance(metadata, dict) and "title_visual_full_slide" in metadata:
+        return bool(metadata.get("title_visual_full_slide", False))
+    return visual_uses_full_slide(slide_data)
+
+
 def get_uploaded_slide_pptx(slide_data: Dict[str, Any]) -> Dict[str, str]:
     pptx = slide_data.get("uploaded_slide_pptx", {})
     return pptx if isinstance(pptx, dict) else {}
@@ -526,10 +551,10 @@ def render_title_slide(prs: Presentation, deck: Dict[str, Any], slide_data: Dict
     date = meta.get("session_date") or "Date not entered"
     audience = meta.get("audience") or "Audience not entered"
     talk_type = meta.get("presentation_type") or "Presentation type not entered"
-    image_data = visual_image_bytes(slide_data)
+    image_data = title_visual_image_bytes(deck, slide_data)
 
     if image_data:
-        if visual_uses_full_slide(slide_data):
+        if title_visual_uses_full_slide(deck, slide_data):
             # Full-title visual mode: use the image as the main slide visual and
             # keep the required title information in a compact readable panel.
             add_image_fit(slide, image_data, 0.35, 0.35, 12.65, 6.80)

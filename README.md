@@ -9,3 +9,15 @@
 - Includes validation and clear error messages for empty, malformed, or incompatible JSON files.
 
 Update v5.26: added one optional presentation-level reference file upload on the Title slide. Any file type can be uploaded (PDF, DOCX, spreadsheet, image, text, etc.). The source file is saved separately inside the presentation's GitHub archive, can be downloaded again from the app, and is not inserted into the PowerPoint or mentor DOCX. The draft keeps only lightweight metadata after the file is archived so autosave remains responsive.
+
+
+Update v5.28: clarified the difference between reference files and slide visuals. Reference files are now labeled as not inserted into PowerPoint, title-slide visual upload is clearly labeled as appearing on Slide 1, reference images can be copied into the title-slide visual with one button, and prepared exports are invalidated whenever visual/reference assets change.
+
+
+## v5.28 title-image reliability fix
+
+- Slide 1 now has a dedicated presentation-level image field instead of sharing the generic per-slide visual state.
+- Older JSON title images migrate automatically.
+- A newly uploaded title image clears stale title-slide images and PPTX replacements.
+- The app shows the exact active filename and preview before export.
+- The title-image uploader resets immediately after a successful replacement.
