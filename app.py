@@ -367,6 +367,14 @@ def initialize_state() -> None:
         st.session_state.autosave_in_progress = False
 
 
+def invalidate_prepared_exports() -> None:
+    """Force PPTX/DOCX to be rebuilt after asset or slide changes."""
+    st.session_state.prepared_pptx_bytes = None
+    st.session_state.prepared_pptx_signature = ""
+    st.session_state.prepared_mentor_docx_bytes = None
+    st.session_state.prepared_mentor_signature = ""
+
+
 def get_selected_slide(deck: Dict[str, Any]) -> Dict[str, Any]:
     slide_id = st.session_state.selected_slide_id
     for slide in deck.get("slides", []):
@@ -554,15 +562,15 @@ def render_reference_file_upload(deck: Dict[str, Any]) -> None:
     The file is stored with the GitHub archive but is never inserted into the
     PowerPoint or mentor review document.
     """
-    st.markdown("#### Optional reference file")
-    st.caption("Upload a PDF, Word document, spreadsheet, image, text file, or other source you may need while building the talk. It is saved with the GitHub archive but is not added to the PowerPoint or mentor DOCX.")
+    st.markdown("#### Reference file — not inserted into PowerPoint")
+    st.caption("Use this for a PDF, Word document, article, spreadsheet, image, or other source you may need while building the talk. It is saved with the GitHub archive only; it will not appear in the PowerPoint or mentor DOCX unless you separately upload it as a slide visual.")
 
     nonce = int(st.session_state.get("reference_uploader_nonce", 0))
     uploaded = st.file_uploader(
-        "Upload reference file",
+        "Upload reference/source file only",
         type=None,
         key=f"widget__reference_file__{nonce}",
-        help="One reference file can be stored with this presentation. Uploading another file replaces the current one.",
+        help="This stores the file for reference only. It does not place the file into the PowerPoint.",
     )
 
     if uploaded is not None:
@@ -594,6 +602,7 @@ def render_reference_file_upload(deck: Dict[str, Any]) -> None:
                     "data_base64": base64.b64encode(data).decode("ascii"),
                 }
                 st.session_state.reference_file_cache = {"sha256": upload_hash, "bytes": data}
+                invalidate_prepared_exports()
                 saved_to_github = autosave_current_draft(reason="reference file uploaded", force=True)
                 if saved_to_github:
                     success_notice("Reference file saved with the presentation archive.", action=True)
@@ -633,6 +642,25 @@ def render_reference_file_upload(deck: Dict[str, Any]) -> None:
             use_container_width=True,
             key="download_reference_file",
         )
+        content_type = str(reference.get("content_type", "") or "")
+        looks_like_image = content_type.startswith("image/") or filename.lower().endswith((".png", ".jpg", ".jpeg"))
+        if looks_like_image:
+            st.caption("This reference image is not on the title slide yet.")
+            if st.button("Use this image as the title-slide visual", use_container_width=True, key="use_reference_as_title_visual"):
+                title_slide = deck["slides"][0]
+                title_slide["visual_image"] = {
+                    "filename": filename,
+                    "content_type": content_type or "image/png",
+                    "sha256": str(reference.get("sha256", "") or asset_sha256(data)),
+                    "data_base64": base64.b64encode(data).decode("ascii"),
+                }
+                title_slide["uploaded_slide_pptx"] = {}
+                title_slide["uploaded_slide_preview_image"] = {}
+                title_slide["visual_full_slide"] = False
+                invalidate_prepared_exports()
+                autosave_current_draft(reason="reference image copied to title visual", force=True)
+                st.toast("Reference image copied to the title-slide visual.", icon="🖼️")
+                st.rerun()
 
     html_url = str(reference.get("html_url", "") or "")
     if html_url:
@@ -650,6 +678,7 @@ def render_reference_file_upload(deck: Dict[str, Any]) -> None:
         deck["metadata"]["reference_file"] = {}
         st.session_state.reference_file_cache = {}
         st.session_state.reference_uploader_nonce = nonce + 1
+        invalidate_prepared_exports()
         autosave_current_draft(reason="reference file removed", force=True)
         st.rerun()
 
@@ -1150,7 +1179,8 @@ def render_title_editor(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
     render_reference_file_upload(deck)
 
-    st.markdown("#### Optional title-slide visual")
+    st.markdown("#### Title-slide visual — appears on the exported title slide")
+    st.caption("Upload the picture you want to appear on Slide 1 here. This is separate from the reference file above.")
     render_visual_upload(slide)
 
     slide["title"] = meta.get("presentation_title", "")
@@ -1264,11 +1294,11 @@ def duplicate_slide(deck: Dict[str, Any], slide: Dict[str, Any]) -> None:
 
 def render_visual_upload(slide: Dict[str, Any]) -> None:
     """Store one optional uploaded asset without reprocessing it on every rerun."""
-    st.caption("Optional: upload a PNG/JPEG image or a PPTX file. Images can appear beside text or fill the slide. A PPTX upload imports the first slide as editable PowerPoint objects when possible.")
+    st.caption("Upload a PNG/JPEG image or a PPTX file for this slide. This file is inserted into the exported PowerPoint for the selected slide.")
     nonce_map = st.session_state.setdefault("visual_uploader_nonce", {})
     nonce = nonce_map.get(slide["id"], 0)
     uploaded = st.file_uploader(
-        "Upload image or PPTX slide",
+        "Upload visual for this slide",
         type=["png", "jpg", "jpeg", "pptx"],
         key=f"widget__{slide['id']}__visual_file__{nonce}",
         help="Use an image for a figure, screenshot, or diagram. Use a PPTX when you already built a polished slide and want the first slide imported as editable PowerPoint objects.",
@@ -1317,6 +1347,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
                 slide["uploaded_slide_pptx"] = {}
                 slide["uploaded_slide_preview_image"] = {}
 
+            invalidate_prepared_exports()
             autosave_current_draft(reason="visual uploaded", force=True)
 
     pptx_info = get_uploaded_slide_pptx(slide)
@@ -1352,6 +1383,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
             slide["uploaded_slide_preview_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
+            invalidate_prepared_exports()
             autosave_current_draft(reason="visual removed", force=True)
             st.rerun()
         return
@@ -1379,6 +1411,7 @@ def render_visual_upload(slide: Dict[str, Any]) -> None:
             slide["uploaded_slide_preview_image"] = {}
             slide["visual_full_slide"] = False
             nonce_map[slide["id"]] = nonce + 1
+            invalidate_prepared_exports()
             autosave_current_draft(reason="visual removed", force=True)
             st.rerun()
     else:
